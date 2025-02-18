@@ -1,0 +1,30 @@
+{
+  "name": "proof-of-uniqueness",
+  "version": "1.0.0",
+  "description": "POU>POW+POS>",
+  "main": "src/index.ts",
+  "scripts": {
+    "gen-wallet": "ts-node src/wallet.ts",
+    "mint": "ts-node src/mint.ts",
+    "start": "NODE_ENV=development NODE_OPTIONS=--experimental-specifier-resolution=node  nodemon --exec  ts-node --esm src/index.ts "
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "nodemon": "^3.1.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "bs58": "^5.0.0",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.7",
+    "elliptic": "^6.6.1",
+    "express": "^4.21.2"
+  }
+}

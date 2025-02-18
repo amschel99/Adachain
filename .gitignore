@@ -1,0 +1,9 @@
+# Dependency directories
+node_modules/
+
+# TypeScript compiled files
+dist/
+build/
+
+# Environment variables
+.env
