@@ -153,12 +153,12 @@ app.get("/health", (req: Request, res: Response) => {
   res.status(200).json("Node operational");
 });
 app.get("/find-peers", async (req: Request, res: Response) => {
-  const { address } = req?.body;
+  const { address } = req.query;
   if (!address) {
     res.status(400).json(`A peer adress must be provided`);
   }
   try {
-    addPeer(address);
+    addPeer(address as string);
     res.status(201).json(`Atleast connected to one peer`);
   } catch (e) {
     res.status(500).json(`Error while trying to connect to a peer`);
@@ -266,7 +266,7 @@ httpServer.on("upgrade", (request, socket, head) => {
 
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);
-  // Connect to initial peers
+
   if (process.env.BOOTSTRAP_PEERS) {
     process.env.BOOTSTRAP_PEERS.split(",").forEach(addPeer);
   }
