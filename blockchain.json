@@ -1,0 +1,15 @@
+{
+  "chain_id": "e0b2f63f8f27c8f45564d63342cb77fdbbe051a4840bcdb9667cea5db4da5dd4",
+  "chain": [
+    {
+      "previousHash": "0",
+      "timestamp": 1483228800000,
+      "transactions": [],
+      "proposer": "genesis",
+      "hash": "8a938fa4f2ae138cbb349ce1f53422c0628b247a38bf67ad6208e525c1ac35bb"
+    }
+  ],
+  "pendingTransactions": [],
+  "verifiedIdentities": {},
+  "chain_hash": "468da66db86f4759b9c49a789225f63a9896de5e9adf0f8a2fbf974c2e2a9952"
+}

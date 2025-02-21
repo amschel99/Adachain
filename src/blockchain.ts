@@ -109,16 +109,21 @@ class Blockchain {
   chain: Block[];
   pendingTransactions: Transaction[];
   verifiedIdentities: Set<string>;
-
+  chain_hash: string;
   constructor() {
     this.chain = [this.createGenesisBlock()];
     this.pendingTransactions = [];
     this.verifiedIdentities = new Set();
     this.chain_id = generateSecureString();
+    this.chain_hash = this.computeChainHash();
   }
 
   createGenesisBlock(): Block {
     return new Block(Date.parse("2017-01-01"), [], "0", "genesis");
+  }
+  computeChainHash() {
+    const chainData = JSON.stringify(this.chain);
+    return crypto.createHash("sha256").update(chainData).digest("hex");
   }
 
   getLatestBlock(): Block {
