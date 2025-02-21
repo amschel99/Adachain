@@ -152,6 +152,33 @@ const httpServer = http.createServer(app);
 app.get("/health", (req: Request, res: Response) => {
   res.status(200).json("Node operational");
 });
+app.get("/find-peers", async (req: Request, res: Response) => {
+  const { address } = req?.body;
+  if (!address) {
+    res.status(400).json(`A peer adress must be provided`);
+  }
+  try {
+    addPeer(address);
+    res.status(201).json(`Atleast connected to one peer`);
+  } catch (e) {
+    res.status(500).json(`Error while trying to connect to a peer`);
+  }
+});
+app.post("/verify-identity", async (req: Request, res: Response) => {
+  const { identity } = req?.query;
+  if (!identity) {
+    res.status(400).json(`Bad request, identity must be specified`);
+  }
+  try {
+    const chain: Blockchain = JSON.parse(
+      await fs.readFile(CHAIN_PATH, "utf-8")
+    );
+    chain.addVerifiedIdentity(identity as string);
+    res.status(201).json(`Verified identitiy`);
+  } catch (e) {
+    res.status(500).json(`Internal server error while trying to add identity`);
+  }
+});
 
 app.post("/ibd", async (req: Request, res: Response) => {
   try {
@@ -180,7 +207,32 @@ app.post("/create-chain", async (req: Request, res: Response) => {
     res.status(500).json("Chain creation failed");
   }
 });
+app.post("/propose-block", async (req: Request, res: Response) => {
+  const { txns, key } = req?.body;
 
+  if (!txns) {
+    res.status(400).json(`A list of transactions must be provided`);
+  }
+  try {
+    const chain: Blockchain = JSON.parse(
+      await fs.readFile(CHAIN_PATH, "utf-8")
+    );
+    chain.proposeBlock(txns, key);
+    res.status(201).json(`Block proposed`);
+  } catch (e) {
+    res.status(500).json(`Internal server error while proposing blocks`);
+  }
+});
+app.post("/create-wallet", (req: Request, res: Response) => {
+  const key = ec.genKeyPair();
+  const publicKey = key.getPublic("hex");
+  const privateKey = key.getPrivate("hex");
+  let wallet: Wallet = {
+    private_key: privateKey,
+    public_key: publicKey,
+  };
+  res.status(201).json(wallet);
+});
 app.post("/signTxn", (req: Request, res: Response) => {
   const { private_key, address, recipient, amount } = req.body;
   if (!private_key || !address || !recipient || !amount) {
