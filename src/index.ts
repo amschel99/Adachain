@@ -17,7 +17,7 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 8800;
+const PORT = process.env.PORT || 80;
 const NODE_WS_URL = `ws://localhost:${PORT}`;
 const wss = new WebSocketServer({ noServer: true });
 
