@@ -18,7 +18,7 @@ app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 80;
-const NODE_WS_URL = process.env.NODE_URL || `ws://localhost:${PORT}`;
+const NODE_WS_URL = process.env.NODE_URL;
 const wss = new WebSocketServer({ noServer: true });
 
 interface CustomPeer extends WebSocket {
@@ -27,10 +27,18 @@ interface CustomPeer extends WebSocket {
 }
 
 let peers: CustomPeer[] = [];
+
 setInterval(() => {
   console.log(`Connected to ${peers.length} peers`);
-  peers.map((peer) => {
-    console.log(peer?.url);
+
+  peers.forEach((client: CustomPeer) => {
+    console.log(client.readyState);
+    client.send(
+      JSON.stringify({
+        event: "REQUEST_KNOWN_PEERS",
+        data: { requester: NODE_WS_URL },
+      })
+    );
   });
 }, 2000);
 
@@ -53,14 +61,7 @@ function validateChain(chain: Blockchain): boolean {
 
 wss.on("connection", (client: CustomPeer) => {
   client.peerUrl = client.url;
-  setInterval(() => {
-    client.send(
-      JSON.stringify({
-        event: "REQUEST_KNOWN_PEERS",
-        data: { requester: NODE_WS_URL },
-      })
-    );
-  }, 2000);
+
   // Send initial peer list to new connection
   client.send(
     JSON.stringify({
