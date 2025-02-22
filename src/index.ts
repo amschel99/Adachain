@@ -27,7 +27,9 @@ interface CustomPeer extends WebSocket {
 }
 
 let peers: CustomPeer[] = [];
-
+setInterval(() => {
+  console.log(`Connected to ${peers.length} peers `);
+}, 2000);
 async function readBlockchain(): Promise<Blockchain> {
   const data = await fs.readFile(CHAIN_PATH, "utf-8");
   return JSON.parse(data);
@@ -124,8 +126,10 @@ function addPeer(peerUrl: string) {
         if (event === "CHAIN_INFO") {
           peerServer.chainLength = data.length;
         }
-
-        // Handle other events...
+        if (event === "KNOWN_PEERS") {
+          data.value.forEach((url: string) => addPeer(url));
+        }
+        // Handle other events including peers info
       } catch (err) {
         console.error("Peer message error:", err);
       }
