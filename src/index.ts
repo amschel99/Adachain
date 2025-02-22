@@ -33,12 +33,14 @@ setInterval(() => {
 
   peers.forEach((client: CustomPeer) => {
     console.log(client.readyState);
-    client.send(
-      JSON.stringify({
-        event: "REQUEST_KNOWN_PEERS",
-        data: { requester: NODE_WS_URL },
-      })
-    );
+    if (client.readyState) {
+      client.send(
+        JSON.stringify({
+          event: "REQUEST_KNOWN_PEERS",
+          data: { requester: NODE_WS_URL },
+        })
+      );
+    }
   });
 }, 2000);
 
