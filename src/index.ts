@@ -29,6 +29,9 @@ interface CustomPeer extends WebSocket {
 let peers: CustomPeer[] = [];
 setInterval(() => {
   console.log(`Connected to ${peers.length} peers`);
+  peers.map((peer) => {
+    console.log(peer?.url);
+  });
 }, 2000);
 
 async function readBlockchain(): Promise<Blockchain> {
