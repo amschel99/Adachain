@@ -128,6 +128,10 @@ wss.on("connection", (client: CustomPeer) => {
           break;
 
         case "REQUEST_KNOWN_PEERS":
+          if (data?.value?.requester) {
+            addPeer(data?.value?.requester);
+          }
+
           client.send(
             JSON.stringify({
               event: "KNOWN_PEERS",
@@ -166,6 +170,7 @@ function addPeer(peerUrl: string) {
         data: { length: localChain.chain.length },
       })
     );
+
     peerClient.send(
       JSON.stringify({
         event: "REQUEST_KNOWN_PEERS",
