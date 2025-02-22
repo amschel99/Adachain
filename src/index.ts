@@ -29,10 +29,11 @@ interface CustomPeer extends WebSocket {
 let peers: CustomPeer[] = [];
 
 setInterval(() => {
-  console.log(`Connected to ${peers.length} peers`);
+  console.log(`Connected to ${peers.length} peers:
+    `);
 
   peers.forEach((client: CustomPeer) => {
-    console.log(client.readyState);
+    console.log(`${client.url}, state: ${client.readyState}`);
     if (client.readyState) {
       client.send(
         JSON.stringify({
