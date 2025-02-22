@@ -127,7 +127,7 @@ function addPeer(peerUrl: string) {
           peerServer.chainLength = data.length;
         }
         if (event === "KNOWN_PEERS") {
-          data.value.forEach((url: string) => addPeer(url));
+          data.value.forEach((url: string) => addPeer);
         }
         // Handle other events including peers info
       } catch (err) {
