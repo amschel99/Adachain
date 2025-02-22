@@ -128,7 +128,7 @@ wss.on("connection", (client: CustomPeer) => {
           break;
 
         case "REQUEST_KNOWN_PEERS":
-          console.log(`Requester data is ${data}`);
+          console.log(`Requester data is ${JSON.stringify(data)}`);
           if (data?.requester) {
             addPeer(data?.requester);
           }
