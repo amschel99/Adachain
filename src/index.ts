@@ -22,7 +22,6 @@ const NODE_WS_URL = `ws://localhost:${PORT}`;
 const wss = new WebSocketServer({ noServer: true });
 
 interface CustomPeer extends WebSocket {
-  url: string;
   latency?: number;
   chainLength?: number;
 }
@@ -103,7 +102,8 @@ function selectBestPeer(): CustomPeer | undefined {
 function addPeer(peerUrl: string) {
   if (!peers.some((peer) => peer.url === peerUrl)) {
     const peerServer = new WebSocket(peerUrl) as CustomPeer;
-    peerServer.url = peerUrl;
+    console.log(peerServer?.url);
+    // peerServer.url = peerUrl;
 
     peerServer.on("open", async () => {
       console.log("Connected to peer", peerUrl);
@@ -156,12 +156,14 @@ app.get("/find-peers", async (req: Request, res: Response) => {
   const { address } = req.query;
   if (!address) {
     res.status(400).json(`A peer adress must be provided`);
-  }
-  try {
-    addPeer(address as string);
-    res.status(201).json(`Atleast connected to one peer`);
-  } catch (e) {
-    res.status(500).json(`Error while trying to connect to a peer`);
+  } else {
+    try {
+      addPeer(address as string);
+      res.status(201).json(`Atleast connected to one peer`);
+    } catch (e) {
+      console.log(e);
+      res.status(500).json(`Error while trying to connect to a peer`);
+    }
   }
 });
 app.post("/verify-identity", async (req: Request, res: Response) => {
