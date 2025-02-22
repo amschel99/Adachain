@@ -27,32 +27,6 @@ interface CustomPeer extends WebSocket {
 }
 
 let peers: CustomPeer[] = [];
-setInterval(() => {
-  peers.map((peerClient) => {
-    peerClient.send(
-      JSON.stringify({
-        event: "REQUEST_KNOWN_PEERS",
-        data: { requester: NODE_WS_URL },
-      })
-    );
-
-    peerClient.on("message", async (rawData) => {
-      try {
-        const { event, data } = JSON.parse(rawData.toString());
-
-        if (event === "KNOWN_PEERS") {
-          data.value.forEach((url: string) => addPeer(url));
-        }
-      } catch (err) {
-        console.error("Peer message error:", err);
-      }
-    });
-  });
-  console.log(`Connected to ${peers.length} peers`);
-  peers.map((peer) => {
-    console.log(peer?.url);
-  });
-}, 2000);
 
 async function readBlockchain(): Promise<Blockchain> {
   try {
@@ -160,6 +134,32 @@ function selectBestPeer(): CustomPeer | undefined {
 }
 
 function addPeer(peerUrl: string) {
+  setInterval(() => {
+    peers.map((peerClient) => {
+      peerClient.send(
+        JSON.stringify({
+          event: "REQUEST_KNOWN_PEERS",
+          data: { requester: NODE_WS_URL },
+        })
+      );
+
+      peerClient.on("message", async (rawData) => {
+        try {
+          const { event, data } = JSON.parse(rawData.toString());
+
+          if (event === "KNOWN_PEERS") {
+            data.value.forEach((url: string) => addPeer(url));
+          }
+        } catch (err) {
+          console.error("Peer message error:", err);
+        }
+      });
+    });
+    console.log(`Connected to ${peers.length} peers`);
+    peers.map((peer) => {
+      console.log(peer?.url);
+    });
+  }, 2000);
   if (peerUrl === NODE_WS_URL) return;
   if (peers.some((p) => p.peerUrl === peerUrl)) return;
 
