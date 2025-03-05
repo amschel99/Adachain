@@ -29,6 +29,7 @@
     "elliptic": "^6.6.1",
     "express": "^4.21.2",
     "http": "^0.0.1-security",
+    "mesh-protocol": "^1.0.5",
     "mongoose": "^8.10.1",
     "ws": "^8.18.1"
   }

@@ -1,0 +1,1 @@
+export const REQUEST_IBD_TIMEOUT = 30000;
