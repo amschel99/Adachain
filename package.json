@@ -6,7 +6,13 @@
   "scripts": {
     "gen-wallet": "ts-node src/wallet.ts",
     "mint": "ts-node src/mint.ts",
-    "start": "NODE_ENV=development NODE_OPTIONS=--experimental-specifier-resolution=node  nodemon --exec  ts-node --esm src/index.ts "
+    "start": "NODE_ENV=development NODE_OPTIONS=--experimental-specifier-resolution=node  nodemon --exec  ts-node --esm src/index.ts ",
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:report": "jest --coverage --reporters=default --reporters=jest-html-reporter --reporters=jest-junit"
   },
   "author": "",
   "license": "MIT",
@@ -14,8 +20,13 @@
     "@tsconfig/node18": "^18.2.4",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/jest": "^29.5.14",
     "@types/ws": "^8.5.14",
+    "jest": "^29.7.0",
+    "jest-html-reporter": "^4.0.1",
+    "jest-junit": "^16.0.0",
     "nodemon": "^3.1.9",
+    "ts-jest": "^29.2.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   },

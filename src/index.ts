@@ -25,6 +25,7 @@ const httpServer = http.createServer(app);
 const wss = manager.getServer();
 
 let idbResponses: { chain: any; peer: string }[] = [];
+
 const IBD_COLLECTION_TIMEOUT = 5000;
 
 // Mempool to store pending transactions
