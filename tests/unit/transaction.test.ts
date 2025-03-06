@@ -7,8 +7,9 @@ describe("Transaction", () => {
       const fromAddress = "sender-address";
       const toAddress = "receiver-address";
       const amount = 100;
+      const fee = 0.1;
 
-      const tx = new Transaction(fromAddress, toAddress, amount);
+      const tx = new Transaction(fromAddress, toAddress, amount, fee);
 
       expect(tx.fromAddress).toBe(fromAddress);
       expect(tx.toAddress).toBe(toAddress);
@@ -21,21 +22,21 @@ describe("Transaction", () => {
 
   describe("calculateHash", () => {
     it("should generate consistent hash for same data", () => {
-      const tx1 = new Transaction("from", "to", 100);
+      const tx1 = new Transaction("from", "to", 100, 0.1);
       // Force same timestamp for testing
       tx1.timestamp = 1000;
 
-      const tx2 = new Transaction("from", "to", 100);
+      const tx2 = new Transaction("from", "to", 100, 0.1);
       tx2.timestamp = 1000;
 
       expect(tx1.calculateHash()).toBe(tx2.calculateHash());
     });
 
     it("should generate different hash for different data", () => {
-      const tx1 = new Transaction("from", "to", 100);
+      const tx1 = new Transaction("from", "to", 100, 0.1);
       tx1.timestamp = 1000;
 
-      const tx2 = new Transaction("from", "to", 200);
+      const tx2 = new Transaction("from", "to", 200, 0.1);
       tx2.timestamp = 1000;
 
       expect(tx1.calculateHash()).not.toBe(tx2.calculateHash());
@@ -47,7 +48,7 @@ describe("Transaction", () => {
       const keyPair = generateTestKeyPair();
       const fromAddress = keyPair.getPublic("hex");
 
-      const tx = new Transaction(fromAddress, "to-address", 100);
+      const tx = new Transaction(fromAddress, "to-address", 100, 0.1);
       tx.sign(keyPair);
 
       expect(tx.signature).toBeDefined();
@@ -59,7 +60,7 @@ describe("Transaction", () => {
       const wrongKeyPair = generateTestKeyPair();
       const fromAddress = keyPair.getPublic("hex");
 
-      const tx = new Transaction(fromAddress, "to-address", 100);
+      const tx = new Transaction(fromAddress, "to-address", 100, 0.1);
 
       expect(() => {
         tx.sign(wrongKeyPair);
@@ -72,14 +73,14 @@ describe("Transaction", () => {
       const keyPair = generateTestKeyPair();
       const fromAddress = keyPair.getPublic("hex");
 
-      const tx = new Transaction(fromAddress, "to-address", 100);
+      const tx = new Transaction(fromAddress, "to-address", 100, 0.1);
       tx.sign(keyPair);
 
       expect(tx.isValid()).toBe(true);
     });
 
     it("should throw error for unsigned transaction", () => {
-      const tx = new Transaction("from-address", "to-address", 100);
+      const tx = new Transaction("from-address", "to-address", 100, 0.1);
 
       expect(() => {
         tx.isValid();
@@ -87,7 +88,7 @@ describe("Transaction", () => {
     });
 
     it("should return true for null fromAddress (coinbase)", () => {
-      const tx = new Transaction(null as any, "to-address", 100);
+      const tx = new Transaction(null as any, "to-address", 100, 0.1);
       expect(tx.isValid()).toBe(true);
     });
   });

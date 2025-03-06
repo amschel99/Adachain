@@ -209,7 +209,7 @@ describe("Blockchain", () => {
       blockchain.chain.push(block);
 
       // Tamper with the block
-      block.transactions = [new Transaction("hacker", "victim", 1000)];
+      block.transactions = [new Transaction("hacker", "victim", 1000, 0.1)];
 
       expect(blockchain.isChainValid()).toBe(false);
     });

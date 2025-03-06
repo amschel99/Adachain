@@ -189,32 +189,24 @@ async function saveBlockchainState(chain: Blockchain) {
 // Update transaction handler
 manager.registerEvent(
   Events.NEW_TRANSACTION,
-  async (peer: Peer, transaction: any) => {
+  async (peer: Peer, tx: Transaction) => {
     try {
       const chain = await loadBlockchainState();
       console.log(`Received a new transaction`);
 
       // Check if sender is banned
-      if (chain.isAddressBanned(transaction.fromAddress)) {
+      if (chain.isAddressBanned(tx.fromAddress)) {
         console.log(
-          `Rejected transaction from banned address: ${transaction.fromAddress}`
+          `Rejected transaction from banned address: ${tx.fromAddress}`
         );
         return;
       }
-
-      const tx = new Transaction(
-        transaction.fromAddress,
-        transaction.toAddress,
-        transaction.amount
-      );
-      tx.signature = transaction.signature;
-      tx.fee = transaction.fee;
 
       // Fee validation
       if (!tx.fee || tx.fee < MINIMUM_TRANSACTION_FEE) {
         console.log(`Rejected transaction with insufficient fee: ${tx.fee}`);
         // Ban address for trying to cheat fees
-        chain.banAddress(tx.fromAddress);
+        // chain.banAddress(tx.fromAddress);
         await saveBlockchainState(chain);
         return;
       }
@@ -223,7 +215,7 @@ manager.registerEvent(
       try {
         if (!tx.isValid()) {
           console.log(`Invalid transaction signature from ${tx.fromAddress}`);
-          chain.banAddress(tx.fromAddress);
+          // chain.banAddress(tx.fromAddress);
           await saveBlockchainState(chain);
           return;
         }
@@ -231,7 +223,7 @@ manager.registerEvent(
         console.log(
           `Signature verification failed, banning address ${tx.fromAddress}`
         );
-        chain.banAddress(tx.fromAddress);
+        // chain.banAddress(tx.fromAddress);
         await saveBlockchainState(chain);
         return;
       }
@@ -364,7 +356,12 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
 
       // Remove included transactions from mempool
       const blockTxHashes = newBlock.transactions.map((tx) =>
-        new Transaction(tx.fromAddress, tx.toAddress, tx.amount).calculateHash()
+        new Transaction(
+          tx.fromAddress,
+          tx.toAddress,
+          tx.amount,
+          tx.fee
+        ).calculateHash()
       );
       mempool = mempool.filter(
         (tx) => !blockTxHashes.includes(tx.calculateHash())
@@ -399,8 +396,7 @@ app.post(
       }
 
       // Create transaction
-      const transaction = new Transaction(fromAddress, toAddress, amount);
-      transaction.fee = fee;
+      const transaction = new Transaction(fromAddress, toAddress, amount, fee);
 
       // Sign the transaction if privateKey is provided
       if (privateKey) {
