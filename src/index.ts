@@ -10,11 +10,11 @@ import { promises as fs } from "fs";
 import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
 import { Request, Response } from "express";
-import { ec } from "elliptic";
+import { ec as EC } from "elliptic";
 
 dotenv.config();
 const app = express();
-const PORT = 5500;
+const PORT = 8800;
 
 const my_addrr = process.env.MY_ADDRESS;
 let manager = new PeerManager(my_addrr);
@@ -34,6 +34,9 @@ const BLOCK_SIZE = 10; // Number of transactions per block
 
 // Add at the top with other constants
 const MINIMUM_TRANSACTION_FEE = 0.001; // Example minimum fee
+
+// Create an instance of the elliptic curve
+const ec = new EC("secp256k1");
 
 setInterval(() => {
   console.log(
@@ -189,6 +192,7 @@ manager.registerEvent(
   async (peer: Peer, transaction: any) => {
     try {
       const chain = await loadBlockchainState();
+      console.log(`Received a new transaction`);
 
       // Check if sender is banned
       if (chain.isAddressBanned(transaction.fromAddress)) {
@@ -384,21 +388,60 @@ interface TransactionRequest {
 app.post(
   "/transaction",
   async (req: express.Request, res: express.Response) => {
-    const { fromAddress, toAddress, amount, signature, fee } =
-      req.body as TransactionRequest;
+    try {
+      const { fromAddress, toAddress, amount, fee, privateKey } = req.body;
 
-    if (!fee || fee < MINIMUM_TRANSACTION_FEE) {
-      res.status(400).json({
-        error: `Transaction fee must be at least ${MINIMUM_TRANSACTION_FEE}`,
+      if (!fee || fee < MINIMUM_TRANSACTION_FEE) {
+        res.status(400).json({
+          error: `Transaction fee must be at least ${MINIMUM_TRANSACTION_FEE}`,
+        });
+        return;
+      }
+
+      // Create transaction
+      const transaction = new Transaction(fromAddress, toAddress, amount);
+      transaction.fee = fee;
+
+      // Sign the transaction if privateKey is provided
+      if (privateKey) {
+        try {
+          const keyPair = ec.keyFromPrivate(privateKey);
+          transaction.sign(keyPair);
+        } catch (error) {
+          res.status(400).json({
+            error: "Invalid private key or signing failed",
+            details: error.message,
+          });
+          return;
+        }
+      } else if (!transaction.signature) {
+        res.status(400).json({
+          error:
+            "Transaction must be signed. Please provide privateKey or signature",
+        });
+        return;
+      }
+
+      manager.broadcast(Events.NEW_TRANSACTION, transaction);
+
+      res.json({
+        success: true,
+        transaction: {
+          fromAddress: transaction.fromAddress,
+          toAddress: transaction.toAddress,
+          amount: transaction.amount,
+          fee: transaction.fee,
+          signature: transaction.signature,
+          timestamp: transaction.timestamp,
+        },
+        message: "Transaction broadcast to network",
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: "Failed to process transaction",
+        details: error.message,
       });
     }
-
-    const transaction = new Transaction(fromAddress, toAddress, amount);
-    transaction.fee = fee;
-    transaction.signature = signature;
-
-    manager.broadcast(Events.NEW_TRANSACTION, transaction);
-    res.json({ success: true, fee });
   }
 );
 
@@ -411,6 +454,7 @@ app.get(
 
       if (!account) {
         res.status(404).json({ error: "Account not found" });
+        return;
       }
 
       res.json({
@@ -418,6 +462,7 @@ app.get(
         balance: account.balance,
         nonce: account.nonce,
       });
+      return;
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch balance" });
     }
@@ -430,6 +475,7 @@ app.post(
     try {
       const chain = await loadBlockchainState();
 
+      // Generate key pair using the instance method, not the class method
       const key = ec.genKeyPair();
       const publicKey = key.getPublic("hex");
       const privateKey = key.getPrivate("hex");
@@ -444,7 +490,8 @@ app.post(
         message: "Wallet created successfully",
       });
     } catch (error) {
-      res.status(500).json({ error: "Failed to create wallet" });
+      console.error(error);
+      res.status(500).json({ error: error });
     }
   }
 );

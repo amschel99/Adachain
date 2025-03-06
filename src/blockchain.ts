@@ -229,6 +229,7 @@ class Blockchain {
         nonce: 0,
       };
       this.accounts.set(address, account);
+      this.addVerifiedIdentity(address);
       return account;
     }
     return this.accounts.get(address)!;

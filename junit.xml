@@ -1,65 +1,65 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="jest tests" tests="43" failures="0" errors="0" time="5.522">
-  <testsuite name="Database Configuration" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:18:02" time="2.794" tests="4">
-    <testcase classname="Database Configuration connectDb should return null in test environment" name="Database Configuration connectDb should return null in test environment" time="0.006">
+<testsuites name="jest tests" tests="43" failures="0" errors="0" time="5.457">
+  <testsuite name="Database Configuration" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:33:53" time="2.823" tests="4">
+    <testcase classname="Database Configuration connectDb should return null in test environment" name="Database Configuration connectDb should return null in test environment" time="0.01">
     </testcase>
-    <testcase classname="Database Configuration connectDb should connect to database in non-test environment" name="Database Configuration connectDb should connect to database in non-test environment" time="0.002">
+    <testcase classname="Database Configuration connectDb should connect to database in non-test environment" name="Database Configuration connectDb should connect to database in non-test environment" time="0.003">
     </testcase>
     <testcase classname="Database Configuration disconnectDB should close the database connection" name="Database Configuration disconnectDB should close the database connection" time="0.001">
     </testcase>
     <testcase classname="Database Configuration disconnectDB should handle errors when closing connection" name="Database Configuration disconnectDB should handle errors when closing connection" time="0.002">
     </testcase>
   </testsuite>
-  <testsuite name="Transaction" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:18:02" time="3.769" tests="8">
-    <testcase classname="Transaction constructor should initialize with correct properties" name="Transaction constructor should initialize with correct properties" time="0.018">
+  <testsuite name="Block" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:33:53" time="3.725" tests="8">
+    <testcase classname="Block constructor should initialize with correct properties" name="Block constructor should initialize with correct properties" time="0.016">
     </testcase>
-    <testcase classname="Transaction calculateHash should generate consistent hash for same data" name="Transaction calculateHash should generate consistent hash for same data" time="0.001">
+    <testcase classname="Block calculateHash should generate consistent hash for same data" name="Block calculateHash should generate consistent hash for same data" time="0.001">
+    </testcase>
+    <testcase classname="Block calculateHash should generate different hash for different data" name="Block calculateHash should generate different hash for different data" time="0.001">
+    </testcase>
+    <testcase classname="Block calculateHash should generate different hash for different transactions" name="Block calculateHash should generate different hash for different transactions" time="0">
+    </testcase>
+    <testcase classname="Block signBlock should add signature to block" name="Block signBlock should add signature to block" time="0.197">
+    </testcase>
+    <testcase classname="Block signBlock should throw error when signing with wrong key" name="Block signBlock should throw error when signing with wrong key" time="0.221">
+    </testcase>
+    <testcase classname="Block isValidBlock should return true for properly signed block" name="Block isValidBlock should return true for properly signed block" time="0.328">
+    </testcase>
+    <testcase classname="Block isValidBlock should throw error for unsigned block" name="Block isValidBlock should throw error for unsigned block" time="0.001">
+    </testcase>
+  </testsuite>
+  <testsuite name="Transaction" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:33:53" time="3.773" tests="8">
+    <testcase classname="Transaction constructor should initialize with correct properties" name="Transaction constructor should initialize with correct properties" time="0.017">
+    </testcase>
+    <testcase classname="Transaction calculateHash should generate consistent hash for same data" name="Transaction calculateHash should generate consistent hash for same data" time="0">
     </testcase>
     <testcase classname="Transaction calculateHash should generate different hash for different data" name="Transaction calculateHash should generate different hash for different data" time="0">
     </testcase>
-    <testcase classname="Transaction sign should add signature to transaction" name="Transaction sign should add signature to transaction" time="0.178">
+    <testcase classname="Transaction sign should add signature to transaction" name="Transaction sign should add signature to transaction" time="0.177">
     </testcase>
-    <testcase classname="Transaction sign should throw error when signing with wrong key" name="Transaction sign should throw error when signing with wrong key" time="0.189">
+    <testcase classname="Transaction sign should throw error when signing with wrong key" name="Transaction sign should throw error when signing with wrong key" time="0.222">
     </testcase>
-    <testcase classname="Transaction isValid should return true for properly signed transaction" name="Transaction isValid should return true for properly signed transaction" time="0.347">
+    <testcase classname="Transaction isValid should return true for properly signed transaction" name="Transaction isValid should return true for properly signed transaction" time="0.314">
     </testcase>
     <testcase classname="Transaction isValid should throw error for unsigned transaction" name="Transaction isValid should throw error for unsigned transaction" time="0.001">
     </testcase>
     <testcase classname="Transaction isValid should return true for null fromAddress (coinbase)" name="Transaction isValid should return true for null fromAddress (coinbase)" time="0">
     </testcase>
   </testsuite>
-  <testsuite name="Block" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:18:02" time="3.785" tests="8">
-    <testcase classname="Block constructor should initialize with correct properties" name="Block constructor should initialize with correct properties" time="0.006">
+  <testsuite name="Server" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:33:53" time="4.382" tests="4">
+    <testcase classname="Server Blockchain State Management should load blockchain state from file if it exists" name="Server Blockchain State Management should load blockchain state from file if it exists" time="0.735">
     </testcase>
-    <testcase classname="Block calculateHash should generate consistent hash for same data" name="Block calculateHash should generate consistent hash for same data" time="0">
+    <testcase classname="Server Blockchain State Management should create new blockchain if state file doesn&apos;t exist" name="Server Blockchain State Management should create new blockchain if state file doesn&apos;t exist" time="0.231">
     </testcase>
-    <testcase classname="Block calculateHash should generate different hash for different data" name="Block calculateHash should generate different hash for different data" time="0">
+    <testcase classname="Server API Endpoints should have endpoints for blockchain operations" name="Server API Endpoints should have endpoints for blockchain operations" time="0.1">
     </testcase>
-    <testcase classname="Block calculateHash should generate different hash for different transactions" name="Block calculateHash should generate different hash for different transactions" time="0.001">
-    </testcase>
-    <testcase classname="Block signBlock should add signature to block" name="Block signBlock should add signature to block" time="0.169">
-    </testcase>
-    <testcase classname="Block signBlock should throw error when signing with wrong key" name="Block signBlock should throw error when signing with wrong key" time="0.184">
-    </testcase>
-    <testcase classname="Block isValidBlock should return true for properly signed block" name="Block isValidBlock should return true for properly signed block" time="0.369">
-    </testcase>
-    <testcase classname="Block isValidBlock should throw error for unsigned block" name="Block isValidBlock should throw error for unsigned block" time="0.001">
+    <testcase classname="Server P2P Communication should register event handlers for P2P events" name="Server P2P Communication should register event handlers for P2P events" time="0.115">
     </testcase>
   </testsuite>
-  <testsuite name="Server" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:18:02" time="4.037" tests="4">
-    <testcase classname="Server Blockchain State Management should load blockchain state from file if it exists" name="Server Blockchain State Management should load blockchain state from file if it exists" time="0.762">
+  <testsuite name="Blockchain" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:33:53" time="4.492" tests="19">
+    <testcase classname="Blockchain constructor should initialize with genesis block" name="Blockchain constructor should initialize with genesis block" time="0.01">
     </testcase>
-    <testcase classname="Server Blockchain State Management should create new blockchain if state file doesn&apos;t exist" name="Server Blockchain State Management should create new blockchain if state file doesn&apos;t exist" time="0.242">
-    </testcase>
-    <testcase classname="Server API Endpoints should have endpoints for blockchain operations" name="Server API Endpoints should have endpoints for blockchain operations" time="0.111">
-    </testcase>
-    <testcase classname="Server P2P Communication should register event handlers for P2P events" name="Server P2P Communication should register event handlers for P2P events" time="0.103">
-    </testcase>
-  </testsuite>
-  <testsuite name="Blockchain" errors="0" failures="0" skipped="0" timestamp="2025-03-06T05:18:02" time="4.717" tests="19">
-    <testcase classname="Blockchain constructor should initialize with genesis block" name="Blockchain constructor should initialize with genesis block" time="0.005">
-    </testcase>
-    <testcase classname="Blockchain constructor should initialize with empty accounts" name="Blockchain constructor should initialize with empty accounts" time="0">
+    <testcase classname="Blockchain constructor should initialize with empty accounts" name="Blockchain constructor should initialize with empty accounts" time="0.009">
     </testcase>
     <testcase classname="Blockchain constructor should initialize with zero current supply" name="Blockchain constructor should initialize with zero current supply" time="0.001">
     </testcase>
@@ -67,33 +67,33 @@
     </testcase>
     <testcase classname="Blockchain createAccount should return existing account if address already exists" name="Blockchain createAccount should return existing account if address already exists" time="0.001">
     </testcase>
-    <testcase classname="Blockchain getAccount should return undefined for non-existent account" name="Blockchain getAccount should return undefined for non-existent account" time="0">
+    <testcase classname="Blockchain getAccount should return undefined for non-existent account" name="Blockchain getAccount should return undefined for non-existent account" time="0.002">
     </testcase>
     <testcase classname="Blockchain getAccount should return account for existing address" name="Blockchain getAccount should return account for existing address" time="0.001">
     </testcase>
-    <testcase classname="Blockchain processTransaction should return false if sender has insufficient funds" name="Blockchain processTransaction should return false if sender has insufficient funds" time="0.149">
+    <testcase classname="Blockchain processTransaction should return false if sender has insufficient funds" name="Blockchain processTransaction should return false if sender has insufficient funds" time="0.179">
     </testcase>
-    <testcase classname="Blockchain processTransaction should process valid transaction and update balances" name="Blockchain processTransaction should process valid transaction and update balances" time="0.138">
+    <testcase classname="Blockchain processTransaction should process valid transaction and update balances" name="Blockchain processTransaction should process valid transaction and update balances" time="0.158">
     </testcase>
-    <testcase classname="Blockchain mintBlockReward should mint reward and add fees to proposer" name="Blockchain mintBlockReward should mint reward and add fees to proposer" time="0.077">
+    <testcase classname="Blockchain mintBlockReward should mint reward and add fees to proposer" name="Blockchain mintBlockReward should mint reward and add fees to proposer" time="0.08">
     </testcase>
     <testcase classname="Blockchain mintBlockReward should not exceed maximum supply" name="Blockchain mintBlockReward should not exceed maximum supply" time="0.003">
     </testcase>
     <testcase classname="Blockchain isChainValid should return true for valid chain" name="Blockchain isChainValid should return true for valid chain" time="0.001">
     </testcase>
-    <testcase classname="Blockchain isChainValid should return false if a block has been tampered with" name="Blockchain isChainValid should return false if a block has been tampered with" time="0.38">
+    <testcase classname="Blockchain isChainValid should return false if a block has been tampered with" name="Blockchain isChainValid should return false if a block has been tampered with" time="0.329">
     </testcase>
     <testcase classname="Blockchain addVerifiedIdentity and isIdentityVerified should correctly add and verify identities" name="Blockchain addVerifiedIdentity and isIdentityVerified should correctly add and verify identities" time="0.001">
     </testcase>
     <testcase classname="Blockchain banAddress and isAddressBanned should correctly ban addresses" name="Blockchain banAddress and isAddressBanned should correctly ban addresses" time="0">
     </testcase>
-    <testcase classname="Blockchain serializeState and loadState should correctly serialize and load state" name="Blockchain serializeState and loadState should correctly serialize and load state" time="0.001">
+    <testcase classname="Blockchain serializeState and loadState should correctly serialize and load state" name="Blockchain serializeState and loadState should correctly serialize and load state" time="0">
     </testcase>
-    <testcase classname="Blockchain proposeBlock should add valid transactions to a new block" name="Blockchain proposeBlock should add valid transactions to a new block" time="0.379">
+    <testcase classname="Blockchain proposeBlock should add valid transactions to a new block" name="Blockchain proposeBlock should add valid transactions to a new block" time="0.463">
     </testcase>
-    <testcase classname="Blockchain testUnverifiedIdentity should return true for valid unverified identity" name="Blockchain testUnverifiedIdentity should return true for valid unverified identity" time="0.117">
+    <testcase classname="Blockchain testUnverifiedIdentity should return true for valid unverified identity" name="Blockchain testUnverifiedIdentity should return true for valid unverified identity" time="0.136">
     </testcase>
-    <testcase classname="Blockchain testUnverifiedIdentity should return false for invalid unverified identity" name="Blockchain testUnverifiedIdentity should return false for invalid unverified identity" time="0.117">
+    <testcase classname="Blockchain testUnverifiedIdentity should return false for invalid unverified identity" name="Blockchain testUnverifiedIdentity should return false for invalid unverified identity" time="0.125">
     </testcase>
   </testsuite>
 </testsuites>
