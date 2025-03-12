@@ -529,8 +529,10 @@ app.post(
 );
 app.post("/choose-proposer", async (req: Request, res: Response) => {
   const { address, wallet_address } = req.body;
-  if (!address) {
-    res.status(400).json(`Bad request, address is required`);
+  if (!address || !wallet_address) {
+    res
+      .status(400)
+      .json(`Bad request, address  and wallet address is required`);
     return;
   }
   try {
