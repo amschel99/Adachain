@@ -14,7 +14,7 @@ import { ec as EC } from "elliptic";
 
 dotenv.config();
 const app = express();
-const PORT = 80;
+const PORT = 8800;
 
 const my_addrr = process.env.MY_ADDRESS;
 let manager = new PeerManager(my_addrr);
@@ -48,6 +48,14 @@ setInterval(() => {
     console.log(`${peer.url}`);
   });
 }, 3000);
+wss.on("message", (peer, message) => {
+  try {
+    const parsed = JSON.parse(message);
+    console.log(`Received message from ${peer.url}:`, parsed.event);
+  } catch (e) {
+    console.log("Could not parse message:", message);
+  }
+});
 
 manager.registerEvent(Events.IBD_REQUEST, async (peer: Peer, data: any) => {
   try {
