@@ -14,7 +14,7 @@ import { ec as EC } from "elliptic";
 
 dotenv.config();
 const app = express();
-const PORT = 8800;
+const PORT = 80;
 
 const my_addrr = process.env.MY_ADDRESS;
 let manager = new PeerManager(my_addrr);
@@ -62,6 +62,34 @@ manager.registerEvent(Events.IBD_REQUEST, async (peer: Peer, data: any) => {
     console.error("Error handling IBD event:", error);
   }
 });
+manager.registerEvent(
+  Events.SELECTED_PROPOSER,
+  async (peer: Peer, data: any) => {
+    try {
+      const { proposerAddress } = data;
+      console.log(`Received proposer selection: ${proposerAddress}`);
+
+      // Check if this node is the selected proposer
+      if (proposerAddress === my_addrr) {
+        console.log(
+          `This node (${my_addrr}) has been selected as the proposer`
+        );
+
+        // Get 10 transactions from mempool
+        const blockTransactions = mempool.slice(0, BLOCK_SIZE);
+
+        if (blockTransactions.length > 0) {
+          // Create and broadcast a new block
+          await createAndBroadcastBlock();
+        } else {
+          console.log("No transactions in mempool to create a block");
+        }
+      }
+    } catch (error) {
+      console.error("Error handling proposer selection:", error);
+    }
+  }
+);
 
 manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
   try {
@@ -288,14 +316,6 @@ async function createAndBroadcastBlock() {
   try {
     const chain = await loadBlockchainState();
 
-    const nextProposer = getNextProposer(chain);
-    if (nextProposer !== my_addrr) {
-      console.log(
-        `Not our turn to propose block. Current proposer: ${nextProposer}`
-      );
-      return;
-    }
-
     console.log("We are the current proposer, creating block...");
     const blockTransactions = mempool.slice(0, BLOCK_SIZE);
 
@@ -353,8 +373,6 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
       block.previousHash,
       block.proposer
     );
-    newBlock.signature = block.signature;
-    newBlock.hash = block.hash;
 
     // Verify block is valid and links to our chain
     if (
@@ -509,7 +527,25 @@ app.post(
     }
   }
 );
+app.post("/choose-proposer", async (req: Request, res: Response) => {
+  const { address } = req.body;
+  if (!address) {
+    res.status(400).json(`Bad request, address is required`);
+    return;
+  }
+  try {
+    // Broadcast the SELECTED_PROPOSER event with the address to all peers
+    manager.broadcast(Events.SELECTED_PROPOSER, { proposerAddress: address });
 
+    console.log(`Broadcast proposer selection: ${address}`);
+    res.status(200).json({
+      message: `Proposer ${address} has been selected and broadcast to network`,
+    });
+  } catch (e) {
+    console.error("Error selecting proposer:", e);
+    res.status(500).json({ error: `Failed to select proposer: ${e.message}` });
+  }
+});
 app.get(
   "/balance/:address",
   async (req: express.Request, res: express.Response) => {
