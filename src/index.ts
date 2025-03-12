@@ -74,7 +74,7 @@ manager.registerEvent(
   Events.SELECTED_PROPOSER,
   async (peer: Peer, data: any) => {
     try {
-      const { proposerAddress } = data;
+      const { proposerAddress, proposerPublicAdress } = data;
       console.log(`Received proposer selection: ${proposerAddress}`);
 
       // Check if this node is the selected proposer
@@ -88,7 +88,7 @@ manager.registerEvent(
 
         if (blockTransactions.length > 0) {
           // Create and broadcast a new block
-          await createAndBroadcastBlock();
+          await createAndBroadcastBlock(proposerPublicAdress);
         } else {
           console.log("No transactions in mempool to create a block");
         }
@@ -304,14 +304,6 @@ manager.registerEvent(
         );
 
         // Check if we can create a block
-        if (mempool.length >= BLOCK_SIZE) {
-          const nextProposer = getNextProposer(chain);
-          if (nextProposer === my_addrr) {
-            await createAndBroadcastBlock();
-          } else {
-            console.log(`Waiting for proposer ${nextProposer} to create block`);
-          }
-        }
       }
     } catch (error) {
       console.error("Error processing transaction:", error);
@@ -320,7 +312,7 @@ manager.registerEvent(
 );
 
 // Update block creation
-async function createAndBroadcastBlock() {
+async function createAndBroadcastBlock(public_addres: string) {
   try {
     const chain = await loadBlockchainState();
 
@@ -342,7 +334,7 @@ async function createAndBroadcastBlock() {
     chain.chain.push(newBlock);
 
     // Mint block reward and distribute fees to proposer
-    chain.mintBlockReward(my_addrr, totalFees);
+    chain.mintBlockReward(public_addres, totalFees);
 
     await saveBlockchainState(chain);
 
@@ -536,14 +528,17 @@ app.post(
   }
 );
 app.post("/choose-proposer", async (req: Request, res: Response) => {
-  const { address } = req.body;
+  const { address, wallet_address } = req.body;
   if (!address) {
     res.status(400).json(`Bad request, address is required`);
     return;
   }
   try {
     // Broadcast the SELECTED_PROPOSER event with the address to all peers
-    manager.broadcast(Events.SELECTED_PROPOSER, { proposerAddress: address });
+    manager.broadcast(Events.SELECTED_PROPOSER, {
+      proposerAddress: address,
+      proposerPublicAdress: wallet_address,
+    });
 
     console.log(`Broadcast proposer selection: ${address}`);
     res.status(200).json({
