@@ -21,12 +21,13 @@ class Transaction {
     fromAddress: string,
     toAddress: string,
     amount: number,
-    fee: number
+    fee: number,
+    timestamp?: number
   ) {
     this.fromAddress = fromAddress;
     this.toAddress = toAddress;
     this.amount = amount;
-    this.timestamp = Date.now();
+    this.timestamp = timestamp || Date.now();
     this.fee = fee;
   }
 

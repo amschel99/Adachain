@@ -35,10 +35,9 @@ export function createSignedTransaction(
   toAddress: string,
   amount: number,
   fee: number,
-  privateKey: ec.KeyPair
+  privateKey: ReturnType<typeof testEc.genKeyPair>
 ) {
-  const tx = new Transaction(fromAddress, toAddress, amount);
-  tx.fee = fee;
+  const tx = new Transaction(fromAddress, toAddress, amount, fee);
   tx.sign(privateKey);
   return tx;
 }

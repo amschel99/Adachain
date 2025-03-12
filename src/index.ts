@@ -189,10 +189,29 @@ async function saveBlockchainState(chain: Blockchain) {
 // Update transaction handler
 manager.registerEvent(
   Events.NEW_TRANSACTION,
-  async (peer: Peer, tx: Transaction) => {
+  async (peer: Peer, txData: any) => {
     try {
       const chain = await loadBlockchainState();
       console.log(`Received a new transaction`);
+
+      // Convert received transaction data to a Transaction object, preserving timestamp
+      let tx: Transaction;
+
+      // If txData is already a Transaction object with all methods
+      if (typeof txData.isValid === "function") {
+        tx = txData;
+      } else {
+        // If it's raw JSON, reconstruct the Transaction with the original timestamp
+        tx = new Transaction(
+          txData.fromAddress,
+          txData.toAddress,
+          txData.amount,
+          txData.fee,
+          txData.timestamp // Use the original timestamp
+        );
+        // Also copy the signature
+        tx.signature = txData.signature;
+      }
 
       // Check if sender is banned
       if (chain.isAddressBanned(tx.fromAddress)) {
@@ -215,13 +234,15 @@ manager.registerEvent(
       try {
         if (!tx.isValid()) {
           console.log(`Invalid transaction signature from ${tx.fromAddress}`);
+          console.log(`Hash used for verification: ${tx.calculateHash()}`);
           // chain.banAddress(tx.fromAddress);
           await saveBlockchainState(chain);
           return;
         }
       } catch (error) {
         console.log(
-          `Signature verification failed, banning address ${tx.fromAddress}`
+          `Signature verification failed, ${tx.fromAddress}`,
+          error.message
         );
         // chain.banAddress(tx.fromAddress);
         await saveBlockchainState(chain);
@@ -342,7 +363,7 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
     ) {
       // Calculate total fees
       const totalFees = newBlock.transactions.reduce(
-        (sum, tx) => sum + tx.fee,
+        (sum, tx) => sum + (tx.fee || 0),
         0
       );
 
@@ -355,14 +376,18 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
       await saveBlockchainState(chain);
 
       // Remove included transactions from mempool
-      const blockTxHashes = newBlock.transactions.map((tx) =>
-        new Transaction(
+      const blockTxHashes = newBlock.transactions.map((tx) => {
+        // Create a Transaction object only for hash calculation
+        const txObj = new Transaction(
           tx.fromAddress,
           tx.toAddress,
           tx.amount,
-          tx.fee
-        ).calculateHash()
-      );
+          tx.fee,
+          tx.timestamp // Pass the timestamp to preserve the hash
+        );
+        return txObj.calculateHash();
+      });
+
       mempool = mempool.filter(
         (tx) => !blockTxHashes.includes(tx.calculateHash())
       );
@@ -388,6 +413,24 @@ app.post(
     try {
       const { fromAddress, toAddress, amount, fee, privateKey } = req.body;
 
+      // Debug: Check if the provided private key generates the expected public key
+      if (privateKey) {
+        const keyPair = ec.keyFromPrivate(privateKey);
+        const derivedPublicKey = keyPair.getPublic("hex");
+
+        console.log("Provided fromAddress:", fromAddress);
+        console.log("Derived public key:", derivedPublicKey);
+
+        if (fromAddress !== derivedPublicKey) {
+          res.status(400).json({
+            error: "Private key does not match fromAddress",
+            providedAddress: fromAddress,
+            derivedAddress: derivedPublicKey,
+          });
+          return; // Only return if keys don't match
+        }
+      }
+
       if (!fee || fee < MINIMUM_TRANSACTION_FEE) {
         res.status(400).json({
           error: `Transaction fee must be at least ${MINIMUM_TRANSACTION_FEE}`,
@@ -395,14 +438,32 @@ app.post(
         return;
       }
 
-      // Create transaction
-      const transaction = new Transaction(fromAddress, toAddress, amount, fee);
+      // Create transaction with a fixed timestamp for consistent hashing
+      const timestamp = Date.now();
+      const transaction = new Transaction(
+        fromAddress,
+        toAddress,
+        amount,
+        fee,
+        timestamp
+      );
 
       // Sign the transaction if privateKey is provided
       if (privateKey) {
         try {
           const keyPair = ec.keyFromPrivate(privateKey);
           transaction.sign(keyPair);
+
+          // Verify our own signature before broadcasting
+          if (!transaction.isValid()) {
+            throw new Error("Transaction verification failed locally");
+          }
+
+          console.log(
+            "Transaction hash for signing:",
+            transaction.calculateHash()
+          );
+          console.log("Signature created:", transaction.signature);
         } catch (error) {
           res.status(400).json({
             error: "Invalid private key or signing failed",
@@ -418,7 +479,15 @@ app.post(
         return;
       }
 
-      manager.broadcast(Events.NEW_TRANSACTION, transaction);
+      // Broadcast the transaction as a plain object to ensure consistent serialization
+      manager.broadcast(Events.NEW_TRANSACTION, {
+        fromAddress: transaction.fromAddress,
+        toAddress: transaction.toAddress,
+        amount: transaction.amount,
+        fee: transaction.fee,
+        timestamp: transaction.timestamp, // Include the timestamp
+        signature: transaction.signature,
+      });
 
       res.json({
         success: true,
