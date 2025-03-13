@@ -625,6 +625,19 @@ async function createAndBroadcastBlock(wallet_address: string) {
     // Remove used transactions from mempool
     mempool = mempool.filter((block) => block.id !== fullBlock.id);
     console.log("Created and broadcast new block");
+
+    // Also broadcast each wallet individually to ensure they're properly registered
+    const createdAccounts = [{ address: wallet_address, amount: totalFees }];
+
+    createdAccounts.forEach((account) => {
+      const walletData = {
+        address: account.address,
+        timestamp: Date.now(),
+      };
+
+      manager.broadcast(WALLET_EVENTS.NEW_WALLET, walletData);
+      console.log(`Broadcasted genesis wallet: ${account.address}`);
+    });
   } catch (error) {
     console.error("Error creating block:", error);
   }
@@ -988,7 +1001,9 @@ manager.registerEvent(
   async (peer: Peer, data: any) => {
     try {
       const { address, timestamp } = data;
-      console.log(`Received new wallet from peer ${peer.url}: ${address}`);
+      console.log(
+        `Received new wallet from peer ${peer.url || peer.peerUrl}: ${address}`
+      );
 
       const chain = await loadBlockchainState();
 
@@ -1000,14 +1015,39 @@ manager.registerEvent(
 
       // Create the account
       chain.createAccount(address);
+
+      // Save the updated blockchain state
       await saveBlockchainState(chain);
 
-      console.log(`Added new wallet: ${address}`);
+      console.log(`Added new wallet from peer: ${address}`);
+
+      // Acknowledge receipt by sending back a confirmation
+      try {
+        peer.send(
+          JSON.stringify({
+            event: "WALLET_CONFIRMATION",
+            data: {
+              address,
+              received: true,
+              timestamp: Date.now(),
+            },
+          })
+        );
+      } catch (ackError) {
+        console.log(`Could not send wallet confirmation: ${ackError.message}`);
+      }
     } catch (error) {
       console.error("Error handling new wallet event:", error);
     }
   }
 );
+
+// Register a confirmation handler to track wallet propagation
+manager.registerEvent("WALLET_CONFIRMATION", (peer: Peer, data: any) => {
+  console.log(
+    `Peer ${peer.url || peer.peerUrl} confirmed wallet ${data.address} receipt`
+  );
+});
 
 app.get(
   "/address/status/:address",
@@ -1130,6 +1170,18 @@ app.get(
 // Add an endpoint to mint the genesis block
 app.post("/genesis", async (req: express.Request, res: express.Response) => {
   try {
+    // Check if a genesis lock file exists to prevent multiple genesis creations
+    try {
+      await fs.access("./genesis.lock");
+      res.status(400).json({
+        error: "Genesis block has already been created on this node",
+        message: "To reset the blockchain, use the /reset endpoint first",
+      });
+      return;
+    } catch (lockError) {
+      // Lock file doesn't exist, we can proceed
+    }
+
     // Check if blockchain already exists
     let chain: Blockchain;
 
@@ -1146,7 +1198,6 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
     } catch (error) {
       console.log("Creating new blockchain for genesis block");
       chain = new Blockchain();
-
       chain.chain = [];
     }
 
@@ -1188,6 +1239,19 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
     chain.addVerifiedIdentity(genesisAddress);
 
     await saveBlockchainState(chain);
+
+    // Create a lock file to prevent multiple genesis creations
+    try {
+      await fs.writeFile(
+        "./genesis.lock",
+        JSON.stringify({
+          timestamp: Date.now(),
+          genesisHash: genesisBlock.hash,
+        })
+      );
+    } catch (lockError) {
+      console.warn("Could not create genesis lock file:", lockError.message);
+    }
 
     // Broadcast the complete blockchain state, not just the genesis block
     const completeState = chain.serializeState();
@@ -1281,6 +1345,14 @@ app.post("/reset", async (req: express.Request, res: express.Response) => {
     // Clear IBD responses
     idbResponses = [];
 
+    // Remove the genesis lock file if it exists
+    try {
+      await fs.unlink("./genesis.lock");
+      console.log("Removed genesis lock file");
+    } catch (unlinkError) {
+      // File might not exist, that's okay
+    }
+
     res.json({
       success: true,
       message: "Blockchain reset to genesis state",
@@ -1371,6 +1443,63 @@ app.get("/wallets", async (req: express.Request, res: express.Response) => {
     });
   }
 });
+
+// Add an endpoint to check if a wallet exists on all peers
+app.get(
+  "/wallet/check/:address",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { address } = req.params;
+      const peers = manager.getPeers();
+
+      if (peers.length === 0) {
+        res.json({
+          address,
+          existsLocally:
+            (await loadBlockchainState()).getAccount(address) !== undefined,
+          peers: 0,
+          message: "No peers connected to check wallet existence",
+        });
+        return;
+      }
+
+      // Check if wallet exists locally
+      const localChain = await loadBlockchainState();
+      const existsLocally = localChain.getAccount(address) !== undefined;
+
+      // If wallet doesn't exist locally, broadcast it to all peers
+      if (!existsLocally) {
+        res.json({
+          address,
+          existsLocally: false,
+          peers: peers.length,
+          message: "Wallet does not exist locally",
+        });
+      } else {
+        // If wallet exists locally, ensure all peers have it
+        const walletData = {
+          address,
+          timestamp: Date.now(),
+        };
+
+        manager.broadcast(WALLET_EVENTS.NEW_WALLET, walletData);
+
+        res.json({
+          address,
+          existsLocally: true,
+          peers: peers.length,
+          message: "Wallet exists locally and has been broadcast to all peers",
+        });
+      }
+    } catch (error) {
+      console.error("Error checking wallet:", error);
+      res.status(500).json({
+        error: "Failed to check wallet",
+        details: error.message,
+      });
+    }
+  }
+);
 
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);

@@ -370,7 +370,34 @@ class Blockchain {
   }
 
   loadState(state: BlockchainState) {
-    this.chain = state.chain;
+    // Properly reconstruct Block objects to maintain prototype methods
+    this.chain = state.chain.map((blockData) => {
+      // Create a new Block instance with the data from the state
+      const block = new Block(
+        blockData.timestamp,
+        blockData.transactions.map((txData) => {
+          // Reconstruct Transaction objects
+          const tx = new Transaction(
+            txData.fromAddress,
+            txData.toAddress,
+            txData.amount,
+            txData.fee || 0,
+            txData.timestamp
+          );
+          tx.signature = txData.signature;
+          return tx;
+        }),
+        blockData.previousHash,
+        blockData.proposer
+      );
+
+      // Copy the hash to ensure consistency
+      block.hash = blockData.hash;
+      block.signature = blockData.signature;
+
+      return block;
+    });
+
     this.accounts = new Map(Object.entries(state.accounts));
     this.bannedAddresses = new Set(state.bannedAddresses || []);
     this.currentSupply = state.currentSupply || 0;
