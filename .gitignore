@@ -9,3 +9,4 @@ build/
 .env
 coverage/
 test-report.html
+blockchain.json
