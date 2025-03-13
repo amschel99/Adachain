@@ -816,7 +816,7 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
     try {
       chain = await loadBlockchainState();
 
-      if (chain.chain.length > 0) {
+      if (chain.chain.length > 1) {
         res.status(400).json({
           error: "Genesis block already exists",
           currentHeight: chain.chain.length,
