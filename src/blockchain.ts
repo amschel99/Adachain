@@ -103,6 +103,43 @@ class Block {
   }
 
   isValidBlock(): boolean {
+    // Verify the hash is correct
+    const calculatedHash = this.calculateHash();
+    if (this.hash !== calculatedHash) {
+      console.log(
+        `Invalid block hash: ${this.hash} vs calculated ${calculatedHash}`
+      );
+      return false;
+    }
+
+    // Verify all transactions in the block
+    for (const tx of this.transactions) {
+      try {
+        // Skip coinbase transactions (those with null fromAddress)
+        if (tx.fromAddress === null) continue;
+
+        // Create a Transaction object to validate
+        const txObj = new Transaction(
+          tx.fromAddress,
+          tx.toAddress,
+          tx.amount,
+          tx.fee,
+          tx.timestamp
+        );
+
+        // Copy the signature for validation
+        txObj.signature = tx.signature;
+
+        if (!txObj.isValid()) {
+          console.log(`Invalid transaction in block: ${txObj.calculateHash()}`);
+          return false;
+        }
+      } catch (error) {
+        console.log(`Error validating transaction: ${error.message}`);
+        return false;
+      }
+    }
+
     return true;
   }
 }
@@ -207,18 +244,42 @@ class Blockchain {
   }
 
   isChainValid(): boolean {
+    // Check if chain is empty
+    if (this.chain.length === 0) {
+      console.log("Chain is empty");
+      return false;
+    }
+
+    // Check genesis block
+    const genesisBlock = this.chain[0];
+    if (genesisBlock.previousHash !== "0") {
+      console.log("Invalid genesis block: previousHash should be '0'");
+      return false;
+    }
+
+    // Validate each block in the chain
     for (let i = 1; i < this.chain.length; i++) {
       const currentBlock = this.chain[i];
       const previousBlock = this.chain[i - 1];
 
+      // Check if the block's previousHash points to the previous block's hash
       if (previousBlock.hash !== currentBlock.previousHash) {
+        console.log(`Invalid chain at block ${i}: previousHash mismatch`);
+        console.log(`Previous block hash: ${previousBlock.hash}`);
+        console.log(`Current block previousHash: ${currentBlock.previousHash}`);
         return false;
       }
 
+      // Validate the block itself
       if (!currentBlock.isValidBlock()) {
+        console.log(`Invalid block at position ${i}`);
         return false;
       }
     }
+
+    console.log(
+      `Chain validated successfully with ${this.chain.length} blocks`
+    );
     return true;
   }
 

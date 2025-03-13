@@ -129,6 +129,7 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
         try {
           let longestChain = null;
           let maxLength = 0;
+          let bestState = null;
 
           // First check local blockchain if it exists
           try {
@@ -137,7 +138,10 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
               "utf8"
             );
             const localChain = new Blockchain();
-            localChain.chain = JSON.parse(localData);
+            const localState = JSON.parse(localData);
+
+            // Load the complete state, not just the chain
+            localChain.loadState(localState);
 
             if (localChain.isChainValid()) {
               console.log(
@@ -146,6 +150,7 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
               );
               maxLength = localChain.chain.length;
               longestChain = localChain.chain;
+              bestState = localState;
             } else {
               console.log("Local chain is invalid, will consider peer chains");
             }
@@ -155,7 +160,9 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
 
           for (const response of idbResponses) {
             const tempChain = new Blockchain();
-            tempChain.chain = response.chain;
+
+            // Load the complete state from the response
+            tempChain.loadState(response.chain);
 
             if (tempChain.isChainValid()) {
               console.log(
@@ -164,7 +171,7 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
 
               if (tempChain.chain.length > maxLength) {
                 maxLength = tempChain.chain.length;
-                longestChain = response.chain;
+                bestState = response.chain;
                 console.log(
                   `Found longer valid chain from ${response.peer} with length ${maxLength}`
                 );
@@ -175,10 +182,10 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
           }
 
           // Save the longest valid chain if it's different from local
-          if (longestChain) {
+          if (bestState) {
             await fsPromises.writeFile(
               "./blockchain.json",
-              JSON.stringify(longestChain, null, 2)
+              JSON.stringify(bestState, null, 2)
             );
             console.log(`Saved longest chain with ${maxLength} blocks`);
           } else {
@@ -200,15 +207,62 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
 });
 
 function requestIBD() {
+  // Clear any existing responses
+  idbResponses = [];
+
   const payload = {
     requestingAddress: my_addrr,
     timestamp: Date.now(),
     type: "INITIAL_BLOCK_REQUEST",
   };
 
+  const peers = manager.getPeers();
+  if (peers.length === 0) {
+    console.log("No peers connected, cannot request IBD");
+    return;
+  }
+
   manager.broadcast(Events.IBD_REQUEST, payload);
-  console.log("Broadcasted IBD request to all peers");
+  console.log(`Broadcasted IBD request to ${peers.length} peers`);
 }
+
+// Add an endpoint to manually trigger IBD
+app.post("/sync", async (req: express.Request, res: express.Response) => {
+  try {
+    requestIBD();
+    res.json({
+      success: true,
+      message: "IBD request broadcasted to all peers",
+      peers: manager.getPeers().length,
+    });
+  } catch (error) {
+    console.error("Error triggering IBD:", error);
+    res.status(500).json({
+      error: "Failed to trigger IBD",
+      details: error.message,
+    });
+  }
+});
+
+// Add an endpoint to get blockchain info
+app.get("/chain/info", async (req: express.Request, res: express.Response) => {
+  try {
+    const chain = await loadBlockchainState();
+    res.json({
+      height: chain.chain.length,
+      latestBlockHash: chain.getLatestBlock().hash,
+      accounts: chain.accounts.size,
+      currentSupply: chain.currentSupply,
+      peers: manager.getPeers().length,
+    });
+  } catch (error) {
+    console.error("Error getting chain info:", error);
+    res.status(500).json({
+      error: "Failed to get chain info",
+      details: error.message,
+    });
+  }
+});
 
 httpServer.on("upgrade", (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, (ws) => {
@@ -219,10 +273,31 @@ httpServer.on("upgrade", (request, socket, head) => {
 async function loadBlockchainState(): Promise<Blockchain> {
   try {
     const data = await fs.readFile("./blockchain.json", "utf8");
-    const state = JSON.parse(data) as BlockchainState;
+    const state = JSON.parse(data);
+
+    // Validate that the state has the expected structure
+    if (!state || !state.chain || !Array.isArray(state.chain)) {
+      console.error("Invalid blockchain state format");
+      return new Blockchain();
+    }
+
     const blockchain = new Blockchain();
-    blockchain.loadState(state);
-    return blockchain;
+
+    try {
+      blockchain.loadState(state);
+
+      // Verify the loaded chain is valid
+      if (!blockchain.isChainValid()) {
+        console.error("Loaded blockchain is invalid, creating new one");
+        return new Blockchain();
+      }
+
+      console.log(`Loaded blockchain with ${blockchain.chain.length} blocks`);
+      return blockchain;
+    } catch (loadError) {
+      console.error("Error loading blockchain state:", loadError.message);
+      return new Blockchain();
+    }
   } catch (error) {
     console.log("Creating new blockchain");
     return new Blockchain();
@@ -230,10 +305,35 @@ async function loadBlockchainState(): Promise<Blockchain> {
 }
 
 async function saveBlockchainState(chain: Blockchain) {
-  await fs.writeFile(
-    "./blockchain.json",
-    JSON.stringify(chain.serializeState(), null, 2)
-  );
+  try {
+    // Serialize the blockchain state
+    const state = chain.serializeState();
+
+    // Create a backup of the current blockchain file if it exists
+    try {
+      const exists = await fs
+        .access("./blockchain.json")
+        .then(() => true)
+        .catch(() => false);
+
+      if (exists) {
+        await fs.copyFile(
+          "./blockchain.json",
+          `./blockchain_backup_${Date.now()}.json`
+        );
+      }
+    } catch (backupError) {
+      console.error("Failed to create blockchain backup:", backupError.message);
+    }
+
+    // Write the new state to the blockchain file
+    await fs.writeFile("./blockchain.json", JSON.stringify(state, null, 2));
+
+    console.log(`Saved blockchain state with ${chain.chain.length} blocks`);
+  } catch (error) {
+    console.error("Error saving blockchain state:", error.message);
+    throw error; // Re-throw to allow calling code to handle the error
+  }
 }
 
 // Add this function to handle adding transactions to the mempool
@@ -390,6 +490,11 @@ async function createAndBroadcastBlock(wallet_address: string) {
       wallet_address
     );
 
+    // Process all transactions in the block
+    for (const tx of blockTransactions) {
+      chain.processTransaction(tx);
+    }
+
     // Update chain with new block
     chain.chain.push(newBlock);
 
@@ -398,10 +503,20 @@ async function createAndBroadcastBlock(wallet_address: string) {
 
     await saveBlockchainState(chain);
 
+    // Create a serializable payload for broadcasting
     let payload = {
-      block: newBlock,
+      block: {
+        timestamp: newBlock.timestamp,
+        transactions: newBlock.transactions,
+        previousHash: newBlock.previousHash,
+        proposer: newBlock.proposer,
+        hash: newBlock.hash,
+      },
       block_id: fullBlock.id,
     };
+
+    console.log(`Broadcasting new block with hash: ${newBlock.hash}`);
+    console.log(`Previous hash: ${newBlock.previousHash}`);
 
     // Broadcast the new block
     manager.broadcast(Events.NEW_BLOCK, payload);
@@ -417,8 +532,9 @@ async function createAndBroadcastBlock(wallet_address: string) {
 // Handle incoming blocks from peers
 manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
   try {
+    console.log(`Received new block from peer: ${peer.peerUrl}`);
     const chain = await loadBlockchainState();
-    const { block, block_id } = payload;
+    const { block, block_id, isGenesis } = payload;
 
     // Validate block
     const newBlock = new Block(
@@ -428,62 +544,98 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
       block.proposer
     );
 
-    // Verify block is valid and links to our chain
-    if (
-      newBlock.isValidBlock() &&
-      newBlock.previousHash === chain.getLatestBlock().hash
-    ) {
-      // Calculate total fees
-      const totalFees = newBlock.transactions.reduce(
-        (sum, tx) => sum + (tx.fee || 0),
-        0
-      );
+    // Copy the hash from the received block to ensure consistency
+    newBlock.hash = block.hash;
 
-      // Add block to chain
-      chain.chain.push(newBlock);
-
-      // we cannot mint block reward twice
-      // chain.mintBlockReward(newBlock.proposer, totalFees);
-
-      await saveBlockchainState(chain);
-
-      // Calculate hashes of all transactions in the new block
-      const blockTxHashes = newBlock.transactions.map((tx) => {
-        // Create a Transaction object only for hash calculation
-        const txObj = new Transaction(
-          tx.fromAddress,
-          tx.toAddress,
-          tx.amount,
-          tx.fee,
-          tx.timestamp // Pass the timestamp to preserve the hash
-        );
-        return txObj.calculateHash();
-      });
-
-      // Remove transactions from mempool that are included in the new block
-      // We need to check all transactions in each mempool block
-      const updatedMempool = [];
-
-      for (const mempoolBlock of mempool) {
-        // Filter out transactions that are in the new block
-        const remainingTransactions = mempoolBlock.transactions.filter(
-          (tx) => !blockTxHashes.includes(tx.calculateHash())
-        );
-
-        // If there are remaining transactions, keep this block with the filtered transactions
-        if (remainingTransactions.length > 0) {
-          updatedMempool.push({
-            id: mempoolBlock.id,
-            transactions: remainingTransactions,
-          });
-        }
-        // If no transactions remain, this block is completely removed
+    // For genesis blocks or special cases
+    if (isGenesis) {
+      console.log("Received genesis block, validating...");
+      if (chain.chain.length <= 1) {
+        chain.chain[0] = newBlock;
+        await saveBlockchainState(chain);
+        console.log("Genesis block accepted and saved");
+      } else {
+        console.log("Genesis block rejected - chain already initialized");
       }
+      return;
+    }
 
-      // Update mempool with filtered blocks
-      mempool = updatedMempool;
+    // Get the latest block in our chain
+    const latestBlock = chain.getLatestBlock();
+    console.log(`Our latest block hash: ${latestBlock.hash}`);
+    console.log(`New block previous hash: ${newBlock.previousHash}`);
+    console.log(`New block hash: ${newBlock.hash}`);
 
-      console.log("Added new block to chain and updated mempool");
+    // Verify block is valid and links to our chain
+    if (newBlock.previousHash === latestBlock.hash) {
+      if (newBlock.isValidBlock()) {
+        console.log("Block is valid and links to our chain");
+
+        // Calculate total fees
+        const totalFees = newBlock.transactions.reduce(
+          (sum, tx) => sum + (tx.fee || 0),
+          0
+        );
+
+        // Add block to chain
+        chain.chain.push(newBlock);
+
+        // Process all transactions in the block
+        for (const tx of newBlock.transactions) {
+          chain.processTransaction(tx);
+        }
+
+        // Mint block reward to the proposer
+        chain.mintBlockReward(newBlock.proposer, totalFees);
+
+        await saveBlockchainState(chain);
+        console.log(`Added new block #${chain.chain.length - 1} to chain`);
+
+        // Calculate hashes of all transactions in the new block
+        const blockTxHashes = newBlock.transactions.map((tx) => {
+          // Create a Transaction object only for hash calculation
+          const txObj = new Transaction(
+            tx.fromAddress,
+            tx.toAddress,
+            tx.amount,
+            tx.fee,
+            tx.timestamp // Pass the timestamp to preserve the hash
+          );
+          return txObj.calculateHash();
+        });
+
+        // Remove transactions from mempool that are included in the new block
+        // We need to check all transactions in each mempool block
+        const updatedMempool = [];
+
+        for (const mempoolBlock of mempool) {
+          // Filter out transactions that are in the new block
+          const remainingTransactions = mempoolBlock.transactions.filter(
+            (tx) => !blockTxHashes.includes(tx.calculateHash())
+          );
+
+          // If there are remaining transactions, keep this block with the filtered transactions
+          if (remainingTransactions.length > 0) {
+            updatedMempool.push({
+              id: mempoolBlock.id,
+              transactions: remainingTransactions,
+            });
+          }
+          // If no transactions remain, this block is completely removed
+        }
+
+        // Update mempool with filtered blocks
+        mempool = updatedMempool;
+
+        console.log("Added new block to chain and updated mempool");
+      } else {
+        console.log("Block validation failed");
+      }
+    } else {
+      console.log("Block does not link to our chain, requesting IBD");
+      // If the block doesn't link to our chain, we might be out of sync
+      // Request an IBD to get the latest chain
+      requestIBD();
     }
   } catch (error) {
     console.error("Error processing new block:", error);
