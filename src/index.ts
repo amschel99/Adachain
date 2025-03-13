@@ -16,7 +16,7 @@ import { Server as SocketServer } from "socket.io";
 
 dotenv.config();
 const app = express();
-const PORT = 8800;
+const PORT = process.env.PORT || 8800;
 
 const my_addrr = process.env.MY_ADDRESS;
 let manager = new PeerManager(my_addrr);
