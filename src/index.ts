@@ -939,6 +939,12 @@ app.get(
   }
 );
 
+// Add a new event for wallet creation
+const WALLET_EVENTS = {
+  NEW_WALLET: "NEW_WALLET",
+};
+
+// Now modify the wallet creation endpoint to broadcast the new wallet
 app.post(
   "/wallet/create",
   async (req: express.Request, res: express.Response) => {
@@ -950,18 +956,55 @@ app.post(
       const publicKey = key.getPublic("hex");
       const privateKey = key.getPrivate("hex");
 
+      // Create the account in our local state
       chain.createAccount(publicKey);
       await saveBlockchainState(chain);
+
+      // Broadcast the new wallet to all peers
+      const walletData = {
+        address: publicKey,
+        timestamp: Date.now(),
+      };
+
+      manager.broadcast(WALLET_EVENTS.NEW_WALLET, walletData);
+      console.log(`Broadcasted new wallet creation: ${publicKey}`);
 
       res.json({
         address: publicKey,
         privateKey: privateKey,
         balance: 0,
-        message: "Wallet created successfully",
+        message: "Wallet created successfully and broadcasted to network",
       });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: error });
+    }
+  }
+);
+
+// Add an event handler for the new wallet event
+manager.registerEvent(
+  WALLET_EVENTS.NEW_WALLET,
+  async (peer: Peer, data: any) => {
+    try {
+      const { address, timestamp } = data;
+      console.log(`Received new wallet from peer ${peer.url}: ${address}`);
+
+      const chain = await loadBlockchainState();
+
+      // Check if the wallet already exists
+      if (chain.getAccount(address)) {
+        console.log(`Wallet ${address} already exists, skipping creation`);
+        return;
+      }
+
+      // Create the account
+      chain.createAccount(address);
+      await saveBlockchainState(chain);
+
+      console.log(`Added new wallet: ${address}`);
+    } catch (error) {
+      console.error("Error handling new wallet event:", error);
     }
   }
 );
@@ -1120,16 +1163,24 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
 
     chain.chain = [genesisBlock]; // Replace the chain with just the genesis block
 
+    // Create the genesis account
     chain.createAccount(genesisAddress, initialSupply);
-
     chain.currentSupply = initialSupply;
+
+    // Create accounts for initial distribution
+    const createdAccounts = [
+      { address: genesisAddress, amount: initialSupply },
+    ];
 
     if (initialDistribution && Array.isArray(initialDistribution)) {
       for (const distribution of initialDistribution) {
         if (distribution.address && distribution.amount) {
           chain.createAccount(distribution.address, distribution.amount);
-
           chain.currentSupply += distribution.amount;
+          createdAccounts.push({
+            address: distribution.address,
+            amount: distribution.amount,
+          });
         }
       }
     }
@@ -1145,6 +1196,17 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
       block: genesisBlock,
       isGenesis: true,
       completeState: completeState, // Include the complete state
+    });
+
+    // Also broadcast each wallet individually to ensure they're properly registered
+    createdAccounts.forEach((account) => {
+      const walletData = {
+        address: account.address,
+        timestamp: Date.now(),
+      };
+
+      manager.broadcast(WALLET_EVENTS.NEW_WALLET, walletData);
+      console.log(`Broadcasted genesis wallet: ${account.address}`);
     });
 
     try {
@@ -1182,9 +1244,7 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
         privateKey: privateKey, // Include the private key in the response
         initialBalance: initialSupply,
       },
-      initialDistribution: initialDistribution || [
-        { address: genesisAddress, amount: initialSupply },
-      ],
+      initialDistribution: createdAccounts,
       totalSupply: chain.currentSupply,
       warning:
         "IMPORTANT: Save the private key securely. It will not be shown again.",
@@ -1230,6 +1290,83 @@ app.post("/reset", async (req: express.Request, res: express.Response) => {
     console.error("Error resetting blockchain:", error);
     res.status(500).json({
       error: "Failed to reset blockchain",
+      details: error.message,
+    });
+  }
+});
+
+// Add an endpoint to manually add an existing wallet
+app.post("/wallet/add", async (req: express.Request, res: express.Response) => {
+  try {
+    const { address, initialBalance = 0, broadcast = true } = req.body;
+
+    if (!address) {
+      res.status(400).json({ error: "Wallet address is required" });
+      return;
+    }
+
+    const chain = await loadBlockchainState();
+
+    // Check if the wallet already exists
+    if (chain.getAccount(address)) {
+      res.status(409).json({
+        error: "Wallet already exists",
+        wallet: chain.getAccount(address),
+      });
+      return;
+    }
+
+    // Create the account
+    const account = chain.createAccount(address, initialBalance);
+    await saveBlockchainState(chain);
+
+    // Broadcast the new wallet to all peers if requested
+    if (broadcast) {
+      const walletData = {
+        address: address,
+        timestamp: Date.now(),
+      };
+
+      manager.broadcast(WALLET_EVENTS.NEW_WALLET, walletData);
+      console.log(`Broadcasted added wallet: ${address}`);
+    }
+
+    res.json({
+      success: true,
+      message:
+        "Wallet added successfully" +
+        (broadcast ? " and broadcasted to network" : ""),
+      wallet: account,
+    });
+  } catch (error) {
+    console.error("Error adding wallet:", error);
+    res.status(500).json({
+      error: "Failed to add wallet",
+      details: error.message,
+    });
+  }
+});
+
+// Add an endpoint to list all wallets
+app.get("/wallets", async (req: express.Request, res: express.Response) => {
+  try {
+    const chain = await loadBlockchainState();
+
+    // Convert the accounts Map to an array
+    const wallets = Array.from(chain.accounts.values()).map((account) => ({
+      address: account.address,
+      balance: account.balance,
+      nonce: account.nonce,
+    }));
+
+    res.json({
+      count: wallets.length,
+      wallets: wallets,
+    });
+  } catch (error) {
+    console.error("Error listing wallets:", error);
+    res.status(500).json({
+      error: "Failed to list wallets",
       details: error.message,
     });
   }
