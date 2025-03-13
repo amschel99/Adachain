@@ -11,81 +11,44 @@ import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
 import { Request, Response } from "express";
 import { ec as EC } from "elliptic";
-
-// Create an instance of the elliptic curve
-const ec = new EC("secp256k1");
+import { Mempool } from "./types";
+import { Server as SocketServer } from "socket.io";
 
 dotenv.config();
 const app = express();
 const PORT = 8800;
 
-// Node identity and wallet configuration
 const my_addrr = process.env.MY_ADDRESS;
-const my_private_key = process.env.MY_PRIVATE_KEY;
-
-// Initialize node wallet
-let nodeKeyPair: EC.KeyPair;
-if (!my_private_key) {
-  console.warn(
-    "No private key found in .env, generating a new wallet for this node"
-  );
-  nodeKeyPair = ec.genKeyPair();
-  const publicKey = nodeKeyPair.getPublic("hex");
-  const privateKey = nodeKeyPair.getPrivate("hex");
-  console.log("Generated new node wallet:");
-  console.log(`Public key (address): ${publicKey}`);
-  console.log(`Private key: ${privateKey}`);
-  console.log("Add these to your .env file as:");
-  console.log(`MY_ADDRESS=${publicKey}`);
-  console.log(`MY_PRIVATE_KEY=${privateKey}`);
-} else {
-  try {
-    nodeKeyPair = ec.keyFromPrivate(my_private_key);
-    const derivedPublicKey = nodeKeyPair.getPublic("hex");
-
-    if (my_addrr && my_addrr !== derivedPublicKey) {
-      console.error(
-        "Warning: MY_ADDRESS in .env doesn't match the public key derived from MY_PRIVATE_KEY"
-      );
-      console.error(`Derived address: ${derivedPublicKey}`);
-      console.error(`Configured address: ${my_addrr}`);
-      console.error("Using the derived address for consistency");
-    }
-
-    console.log(`Node wallet initialized with address: ${derivedPublicKey}`);
-  } catch (error) {
-    console.error(
-      "Failed to initialize node wallet with provided private key:",
-      error
-    );
-    process.exit(1);
-  }
-}
-
-// Use the derived public key as the node's address for consistency
-const nodeAddress = nodeKeyPair.getPublic("hex");
-
-let manager = new PeerManager(nodeAddress);
+let manager = new PeerManager(my_addrr);
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const httpServer = http.createServer(app);
 const wss = manager.getServer();
+export const io = new SocketServer(httpServer, {
+  path: "/socket.io",
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+io.on("connection", (socket) => {
+  socket.emit("newConnection", { message: `Hello from ${my_addrr}` });
+});
 
 let idbResponses: { chain: any; peer: string }[] = [];
 
 const IBD_COLLECTION_TIMEOUT = 5000;
 
 // Mempool to store pending transactions
-let mempool: Transaction[] = [];
+let mempool: Mempool = [];
 const BLOCK_SIZE = 10; // Number of transactions per block
 
 // Add at the top with other constants
 const MINIMUM_TRANSACTION_FEE = 0.001; // Example minimum fee
 
-// Add constants for consensus parameters
-const BLOCK_TIME = 30000; // 30 seconds per block (time slot)
-const MIN_STAKE_TO_PROPOSE = 10; // Minimum balance to be eligible as proposer
+// Create an instance of the elliptic curve
+const ec = new EC("secp256k1");
 
 setInterval(() => {
   console.log(
@@ -97,6 +60,14 @@ setInterval(() => {
     console.log(`${peer.url}`);
   });
 }, 3000);
+wss.on("message", (peer, message) => {
+  try {
+    const parsed = JSON.parse(message);
+    console.log(`Received message from ${peer.url}:`, parsed.event);
+  } catch (e) {
+    console.log("Could not parse message:", message);
+  }
+});
 
 manager.registerEvent(Events.IBD_REQUEST, async (peer: Peer, data: any) => {
   try {
@@ -111,6 +82,36 @@ manager.registerEvent(Events.IBD_REQUEST, async (peer: Peer, data: any) => {
     console.error("Error handling IBD event:", error);
   }
 });
+manager.registerEvent(
+  Events.SELECTED_PROPOSER,
+  async (peer: Peer, data: any) => {
+    try {
+      const { proposerAddress, wallet_address } = data;
+      console.log(`Received proposer selection: ${proposerAddress}`);
+
+      // Check if this node is the selected proposer
+      if (proposerAddress === my_addrr) {
+        console.log(
+          `This node (${my_addrr}) has been selected as the proposer`
+        );
+
+        // Find a full block of transactions
+        const fullBlock = mempool.find(
+          (block) => block.transactions.length === BLOCK_SIZE
+        );
+
+        if (fullBlock) {
+          // Create and broadcast a new block
+          await createAndBroadcastBlock(wallet_address);
+        } else {
+          console.log("No full blocks in mempool to create a block");
+        }
+      }
+    } catch (error) {
+      console.error("Error handling proposer selection:", error);
+    }
+  }
+);
 
 manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
   try {
@@ -200,7 +201,7 @@ manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
 
 function requestIBD() {
   const payload = {
-    requestingAddress: nodeAddress,
+    requestingAddress: my_addrr,
     timestamp: Date.now(),
     type: "INITIAL_BLOCK_REQUEST",
   };
@@ -233,6 +234,32 @@ async function saveBlockchainState(chain: Blockchain) {
     "./blockchain.json",
     JSON.stringify(chain.serializeState(), null, 2)
   );
+}
+
+// Add this function to handle adding transactions to the mempool
+function addTransactionToMempool(tx: Transaction): void {
+  // Check if there's an existing block with space for more transactions
+  const availableBlock = mempool.find(
+    (block) => block.transactions.length < BLOCK_SIZE
+  );
+
+  if (availableBlock) {
+    // Add transaction to existing block
+    availableBlock.transactions.push(tx);
+    console.log(
+      `Added transaction to existing block, now has ${availableBlock.transactions.length}/${BLOCK_SIZE} transactions`
+    );
+  } else {
+    // Create a new block with this transaction
+    const newBlock = {
+      id: Date.now().toString(), // Use timestamp as unique ID
+      transactions: [tx],
+    };
+    mempool.push(newBlock);
+    console.log(
+      `Created new transaction block, now has 1/${BLOCK_SIZE} transactions`
+    );
+  }
 }
 
 // Update transaction handler
@@ -309,20 +336,23 @@ manager.registerEvent(
       }
 
       // If all validations pass, add to mempool
-      if (!mempool.some((t) => t.calculateHash() === tx.calculateHash())) {
-        mempool.push(tx);
-        console.log(
-          "Transaction added to mempool. Current size:",
-          mempool.length
-        );
+      // Check if transaction already exists in any block in the mempool
+      const txHash = tx.calculateHash();
 
-        // Check if we can create a block
-        if (mempool.length >= BLOCK_SIZE) {
-          console.log(
-            "Mempool threshold reached, attempting to create block..."
-          );
-          await createAndBroadcastBlock();
+      // Check if this transaction already exists in any block
+      let txExists = false;
+      for (const block of mempool) {
+        for (const existingTx of block.transactions) {
+          if (existingTx.calculateHash() === txHash) {
+            txExists = true;
+            break;
+          }
         }
+        if (txExists) break;
+      }
+
+      if (!txExists) {
+        addTransactionToMempool(tx);
       }
     } catch (error) {
       console.error("Error processing transaction:", error);
@@ -330,308 +360,135 @@ manager.registerEvent(
   }
 );
 
-// Update block creation
-async function createAndBroadcastBlock() {
+// Update createAndBroadcastBlock to use the new mempool structure
+async function createAndBroadcastBlock(wallet_address: string) {
   try {
     const chain = await loadBlockchainState();
 
-    // Get current time slot
-    const currentTime = Date.now();
-    const currentTimeSlot = Math.floor(currentTime / BLOCK_TIME);
-    const timeInSlot = currentTime % BLOCK_TIME; // Time elapsed in current slot
+    console.log("We are the current proposer, creating block...");
 
-    // Don't allow block creation in the last 5 seconds of a time slot
-    // This prevents two nodes from creating blocks for the same slot
-    const SAFETY_MARGIN = 5000; // 5 seconds
-    if (timeInSlot > BLOCK_TIME - SAFETY_MARGIN) {
-      console.log(
-        `Too late in time slot ${currentTimeSlot}, waiting for next slot`
-      );
-      return;
-    }
-
-    // Check if this time slot already has a block
-    const lastBlock = chain.getLatestBlock();
-    const lastBlockTimeSlot = Math.floor(lastBlock.timestamp / BLOCK_TIME);
-
-    if (lastBlockTimeSlot === currentTimeSlot) {
-      console.log(`Block already created for time slot ${currentTimeSlot}`);
-      return;
-    }
-
-    const nextProposer = getNextProposer(chain);
-    // Check if we are the proposer
-    const isOurTurn = nextProposer === nodeAddress;
-
-    if (!isOurTurn) {
-      console.log(
-        `Not our turn to propose block. Current proposer: ${nextProposer}`
-      );
-      return;
-    }
-
-    // If mempool is empty, don't create an empty block
-    if (mempool.length === 0) {
-      console.log("Mempool is empty, not creating block");
-      return;
-    }
-
-    console.log(
-      `We are the proposer for time slot ${currentTimeSlot}, creating block...`
+    // Find a full block of transactions
+    const fullBlock = mempool.find(
+      (block) => block.transactions.length === BLOCK_SIZE
     );
-    const blockTransactions = mempool.slice(0, BLOCK_SIZE);
+
+    if (!fullBlock) {
+      console.log("No full blocks available to create a block");
+      return;
+    }
+
+    const blockTransactions = fullBlock.transactions;
 
     // Calculate total fees from transactions
     const totalFees = blockTransactions.reduce((sum, tx) => sum + tx.fee, 0);
 
-    // Use exact time slot boundary for consistent timestamps across nodes
-    const blockTimestamp = currentTimeSlot * BLOCK_TIME;
-
+    const lastBlock = chain.getLatestBlock();
     const newBlock = new Block(
-      blockTimestamp,
+      Date.now(),
       blockTransactions,
       lastBlock.hash,
-      nodeAddress
+      wallet_address
     );
-
-    // Sign the block with our node's private key
-    try {
-      newBlock.signBlock(nodeKeyPair);
-      console.log("Block signed successfully");
-    } catch (error) {
-      console.error("Failed to sign block:", error);
-      return;
-    }
-
-    // Verify block is valid before adding to chain
-    if (!newBlock.isValidBlock()) {
-      console.error("Block signature validation failed");
-      return;
-    }
-
-    // Process all transactions in the block
-    let allTransactionsValid = true;
-    for (const tx of blockTransactions) {
-      if (!chain.processTransaction(tx)) {
-        console.error(`Failed to process transaction: ${tx.calculateHash()}`);
-        allTransactionsValid = false;
-        break;
-      }
-    }
-
-    if (!allTransactionsValid) {
-      console.error("Block contains invalid transactions, aborting");
-      return;
-    }
 
     // Update chain with new block
     chain.chain.push(newBlock);
 
     // Mint block reward and distribute fees to proposer
-    chain.mintBlockReward(nodeAddress, totalFees);
+    chain.mintBlockReward(wallet_address, totalFees);
 
     await saveBlockchainState(chain);
 
+    let payload = {
+      block: newBlock,
+      block_id: fullBlock.id,
+    };
+
     // Broadcast the new block
-    manager.broadcast(Events.NEW_BLOCK, newBlock);
+    manager.broadcast(Events.NEW_BLOCK, payload);
 
     // Remove used transactions from mempool
-    const usedTxHashes = blockTransactions.map((tx) => tx.calculateHash());
-    mempool = mempool.filter(
-      (tx) => !usedTxHashes.includes(tx.calculateHash())
-    );
-
-    console.log(
-      `Created and broadcast new block for time slot ${currentTimeSlot} with ${blockTransactions.length} transactions`
-    );
+    mempool = mempool.filter((block) => block.id !== fullBlock.id);
+    console.log("Created and broadcast new block");
   } catch (error) {
     console.error("Error creating block:", error);
   }
 }
 
-// Add this new function for deterministic proposer selection
-function getNextProposer(chain: Blockchain): string {
-  // Get all eligible proposers (verified identities with minimum stake)
-  const eligibleProposers = Array.from(chain.verifiedIdentities)
-    .filter((address) => {
-      const account = chain.getAccount(address);
-      // Require minimum stake to be a proposer
-      return account && account.balance >= MIN_STAKE_TO_PROPOSE;
-    })
-    .sort(); // Sort for deterministic order
-
-  // If we have no eligible proposers with stake, fall back to verified identities
-  if (eligibleProposers.length === 0) {
-    const verifiedProposers = Array.from(chain.verifiedIdentities).sort();
-    if (verifiedProposers.length > 0) {
-      // Use time-based rotation among verified identities
-      const currentTimeSlot = Math.floor(Date.now() / BLOCK_TIME);
-      const proposerIndex = currentTimeSlot % verifiedProposers.length;
-      const selectedProposer = verifiedProposers[proposerIndex];
-
-      console.log(
-        `Selected proposer ${selectedProposer} for time slot ${currentTimeSlot}`
-      );
-      return selectedProposer;
-    }
-
-    // If still no proposers, use our own address as fallback
-    console.log("No eligible proposers available, using own address");
-    return nodeAddress;
-  }
-
-  // Use time-based rotation to select a proposer
-  const currentTimeSlot = Math.floor(Date.now() / BLOCK_TIME);
-  const proposerIndex = currentTimeSlot % eligibleProposers.length;
-  const selectedProposer = eligibleProposers[proposerIndex];
-
-  console.log(
-    `Selected proposer ${selectedProposer} for time slot ${currentTimeSlot} (${eligibleProposers.length} eligible proposers)`
-  );
-  return selectedProposer;
-}
-
 // Handle incoming blocks from peers
-manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
+manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
   try {
     const chain = await loadBlockchainState();
-    const lastBlock = chain.getLatestBlock();
+    const { block, block_id } = payload;
 
-    // Validate and reconstruct the block
+    // Validate block
     const newBlock = new Block(
       block.timestamp,
       block.transactions,
       block.previousHash,
       block.proposer
     );
-    newBlock.signature = block.signature;
-    newBlock.hash = block.hash;
-
-    // Check if block is for the current or future time slot
-    const blockTimeSlot = Math.floor(newBlock.timestamp / BLOCK_TIME);
-    const currentTimeSlot = Math.floor(Date.now() / BLOCK_TIME);
-    const lastBlockTimeSlot = Math.floor(lastBlock.timestamp / BLOCK_TIME);
-
-    // Reject blocks from past time slots (except if our chain is behind)
-    if (blockTimeSlot < currentTimeSlot && blockTimeSlot <= lastBlockTimeSlot) {
-      console.log(
-        `Rejecting block from past time slot ${blockTimeSlot}. Current slot: ${currentTimeSlot}`
-      );
-      return;
-    }
 
     // Verify block is valid and links to our chain
-    if (!newBlock.isValidBlock() || newBlock.previousHash !== lastBlock.hash) {
-      console.log(`Rejecting invalid block from ${block.proposer}`);
-      return;
-    }
-
-    // Verify the proposer is correct for this time slot
-    const expectedProposer = getNextProposer(chain);
-    if (newBlock.proposer !== expectedProposer) {
-      console.log(
-        `Rejecting block: proposer ${newBlock.proposer} is not the expected proposer ${expectedProposer} for time slot ${blockTimeSlot}`
+    if (
+      newBlock.isValidBlock() &&
+      newBlock.previousHash === chain.getLatestBlock().hash
+    ) {
+      // Calculate total fees
+      const totalFees = newBlock.transactions.reduce(
+        (sum, tx) => sum + (tx.fee || 0),
+        0
       );
-      return;
-    }
 
-    // Check for double-block for the same time slot
-    if (blockTimeSlot === lastBlockTimeSlot) {
-      console.log(
-        `Rejecting block: already have a block for time slot ${blockTimeSlot}`
-      );
-      return;
-    }
+      // Add block to chain
+      chain.chain.push(newBlock);
 
-    console.log(
-      `Received valid block for time slot ${blockTimeSlot} from proposer ${newBlock.proposer}`
-    );
+      // we cannot mint block reward twice
+      // chain.mintBlockReward(newBlock.proposer, totalFees);
 
-    // Verify all transactions in the block
-    const processedTxHashes = new Set<string>();
-    let allTransactionsValid = true;
+      await saveBlockchainState(chain);
 
-    for (const tx of newBlock.transactions) {
-      // Skip processing if this is a duplicate within the block
-      const txHash =
-        typeof tx.calculateHash === "function"
-          ? tx.calculateHash()
-          : new Transaction(
-              tx.fromAddress,
-              tx.toAddress,
-              tx.amount,
-              tx.fee,
-              tx.timestamp
-            ).calculateHash();
-
-      if (processedTxHashes.has(txHash)) {
-        console.log(`Skipping duplicate transaction in block: ${txHash}`);
-        continue;
-      }
-
-      processedTxHashes.add(txHash);
-
-      // Process the transaction
-      if (!chain.processTransaction(tx)) {
-        console.error(
-          `Failed to process transaction in received block: ${txHash}`
+      // Calculate hashes of all transactions in the new block
+      const blockTxHashes = newBlock.transactions.map((tx) => {
+        // Create a Transaction object only for hash calculation
+        const txObj = new Transaction(
+          tx.fromAddress,
+          tx.toAddress,
+          tx.amount,
+          tx.fee,
+          tx.timestamp // Pass the timestamp to preserve the hash
         );
-        allTransactionsValid = false;
-        break;
+        return txObj.calculateHash();
+      });
+
+      // Remove transactions from mempool that are included in the new block
+      // We need to check all transactions in each mempool block
+      const updatedMempool = [];
+
+      for (const mempoolBlock of mempool) {
+        // Filter out transactions that are in the new block
+        const remainingTransactions = mempoolBlock.transactions.filter(
+          (tx) => !blockTxHashes.includes(tx.calculateHash())
+        );
+
+        // If there are remaining transactions, keep this block with the filtered transactions
+        if (remainingTransactions.length > 0) {
+          updatedMempool.push({
+            id: mempoolBlock.id,
+            transactions: remainingTransactions,
+          });
+        }
+        // If no transactions remain, this block is completely removed
       }
+
+      // Update mempool with filtered blocks
+      mempool = updatedMempool;
+
+      console.log("Added new block to chain and updated mempool");
     }
-
-    if (!allTransactionsValid) {
-      console.error("Rejecting block with invalid transactions");
-      return;
-    }
-
-    // Calculate total fees
-    const totalFees = newBlock.transactions.reduce(
-      (sum, tx) => sum + (tx.fee || 0),
-      0
-    );
-
-    // Add block to chain
-    chain.chain.push(newBlock);
-
-    // Mint reward and fees to proposer
-    chain.mintBlockReward(newBlock.proposer, totalFees);
-
-    await saveBlockchainState(chain);
-
-    // Remove included transactions from mempool
-    const blockTxHashes = newBlock.transactions.map((tx) => {
-      // Create a Transaction object only for hash calculation
-      const txObj = new Transaction(
-        tx.fromAddress,
-        tx.toAddress,
-        tx.amount,
-        tx.fee,
-        tx.timestamp // Pass the timestamp to preserve the hash
-      );
-      return txObj.calculateHash();
-    });
-
-    mempool = mempool.filter(
-      (tx) => !blockTxHashes.includes(tx.calculateHash())
-    );
-
-    console.log(
-      `Added new block for time slot ${blockTimeSlot} to chain. Height: ${chain.chain.length}`
-    );
   } catch (error) {
     console.error("Error processing new block:", error);
   }
 });
-
-interface TransactionRequest {
-  fromAddress: string;
-  toAddress: string;
-  amount: number;
-  signature: string;
-  fee: number;
-}
 
 app.post(
   "/transaction",
@@ -705,15 +562,35 @@ app.post(
         return;
       }
 
-      // Broadcast the transaction as a plain object to ensure consistent serialization
-      manager.broadcast(Events.NEW_TRANSACTION, {
-        fromAddress: transaction.fromAddress,
-        toAddress: transaction.toAddress,
-        amount: transaction.amount,
-        fee: transaction.fee,
-        timestamp: transaction.timestamp, // Include the timestamp
-        signature: transaction.signature,
-      });
+      // Check if transaction already exists in mempool
+      const txHash = transaction.calculateHash();
+      let txExists = false;
+      for (const block of mempool) {
+        for (const existingTx of block.transactions) {
+          if (existingTx.calculateHash() === txHash) {
+            txExists = true;
+            break;
+          }
+        }
+        if (txExists) break;
+      }
+
+      if (!txExists) {
+        // Add to mempool
+        addTransactionToMempool(transaction);
+
+        // Broadcast the transaction as a plain object to ensure consistent serialization
+        manager.broadcast(Events.NEW_TRANSACTION, {
+          fromAddress: transaction.fromAddress,
+          toAddress: transaction.toAddress,
+          amount: transaction.amount,
+          fee: transaction.fee,
+          timestamp: transaction.timestamp, // Include the timestamp
+          signature: transaction.signature,
+        });
+      } else {
+        console.log("Transaction already exists in mempool, not adding again");
+      }
 
       res.json({
         success: true,
@@ -726,6 +603,7 @@ app.post(
           timestamp: transaction.timestamp,
         },
         message: "Transaction broadcast to network",
+        hash: transaction.calculateHash(),
       });
     } catch (error) {
       res.status(500).json({
@@ -736,6 +614,30 @@ app.post(
   }
 );
 
+app.post("/choose-proposer", async (req: Request, res: Response) => {
+  const { address, wallet_address } = req.body;
+  if (!address || !wallet_address) {
+    res
+      .status(400)
+      .json(`Bad request, address  and wallet address is required`);
+    return;
+  }
+  try {
+    // Broadcast the SELECTED_PROPOSER event with the address to all peers
+    manager.broadcast(Events.SELECTED_PROPOSER, {
+      proposerAddress: address,
+      wallet_address: wallet_address,
+    });
+
+    console.log(`Broadcast proposer selection: ${address}`);
+    res.status(200).json({
+      message: `Proposer ${address} has been selected and broadcast to network`,
+    });
+  } catch (e) {
+    console.error("Error selecting proposer:", e);
+    res.status(500).json({ error: `Failed to select proposer: ${e.message}` });
+  }
+});
 app.get(
   "/balance/:address",
   async (req: express.Request, res: express.Response) => {
@@ -771,28 +673,14 @@ app.post(
       const publicKey = key.getPublic("hex");
       const privateKey = key.getPrivate("hex");
 
-      // Create the account in the blockchain
       chain.createAccount(publicKey);
       await saveBlockchainState(chain);
-
-      // Check if this was requested for node operation
-      const forNodeOperation = req.body.forNodeOperation === true;
-
-      let nodeInstructions = "";
-      if (forNodeOperation) {
-        nodeInstructions =
-          "To use this wallet for your node operation, add these to your .env file:\n" +
-          `MY_ADDRESS=${publicKey}\n` +
-          `MY_PRIVATE_KEY=${privateKey}\n` +
-          "Then restart your node.";
-      }
 
       res.json({
         address: publicKey,
         privateKey: privateKey,
         balance: 0,
         message: "Wallet created successfully",
-        nodeInstructions: forNodeOperation ? nodeInstructions : undefined,
       });
     } catch (error) {
       console.error(error);
@@ -835,71 +723,196 @@ app.get("/supply", async (req: express.Request, res: express.Response) => {
   }
 });
 
-// Add a new endpoint to check node status
-app.get("/node/status", async (req: express.Request, res: express.Response) => {
-  try {
-    const chain = await loadBlockchainState();
+app.get(
+  "/transaction/:hash",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const txHash = req.params.hash;
+      const chain = await loadBlockchainState();
 
-    // Get node account info
-    const nodeAccount = chain.getAccount(nodeAddress) || {
-      address: nodeAddress,
-      balance: 0,
-      nonce: 0,
-    };
+      // First check the blockchain for the transaction
+      let foundTx = null;
+      let blockHeight = null;
+      let confirmations = 0;
 
-    // Count blocks proposed by this node
-    const blocksProposed = chain.chain.filter(
-      (block) => block.proposer === nodeAddress
-    ).length;
+      // Search through all blocks in the chain
+      for (let i = 0; i < chain.chain.length; i++) {
+        const block = chain.chain[i];
 
-    // Calculate total rewards earned (all fees + block rewards)
-    const totalBlockRewardsEarned = nodeAccount.balance;
+        // Search through transactions in this block
+        for (const tx of block.transactions) {
+          // Create a Transaction object to calculate the hash
+          const txObj = new Transaction(
+            tx.fromAddress,
+            tx.toAddress,
+            tx.amount,
+            tx.fee,
+            tx.timestamp
+          );
 
-    // Get connected peers
-    const connectedPeers = manager.getPeers().map((peer) => peer.peerUrl);
+          // If signature exists, copy it to ensure hash calculation is accurate
+          if (tx.signature) {
+            txObj.signature = tx.signature;
+          }
 
-    res.json({
-      node: {
-        address: nodeAddress,
-        isProposer: true,
-        balance: nodeAccount.balance,
-        blocksProposed: blocksProposed,
-      },
-      network: {
-        chainHeight: chain.chain.length,
-        connectedPeers: connectedPeers.length,
-        peersList: connectedPeers,
-        currentBlockReward: chain.getCurrentBlockReward(),
-        pendingTransactions: mempool.length,
-      },
-      rewards: {
-        totalEarned: totalBlockRewardsEarned,
-        nextBlockIn:
-          mempool.length >= BLOCK_SIZE
-            ? "Ready to propose"
-            : `${BLOCK_SIZE - mempool.length} more transactions needed`,
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching node status:", error);
-    res.status(500).json({ error: "Failed to get node status" });
+          if (txObj.calculateHash() === txHash) {
+            foundTx = tx;
+            blockHeight = i;
+            confirmations = chain.chain.length - i;
+            break;
+          }
+        }
+
+        if (foundTx) break;
+      }
+
+      // If not found in blockchain, check mempool
+      if (!foundTx) {
+        for (const block of mempool) {
+          for (const tx of block.transactions) {
+            if (tx.calculateHash() === txHash) {
+              foundTx = tx;
+              confirmations = 0; // 0 confirmations for mempool transactions
+              break;
+            }
+          }
+          if (foundTx) break;
+        }
+      }
+
+      if (foundTx) {
+        // Return the transaction with additional metadata
+        res.json({
+          transaction: {
+            fromAddress: foundTx.fromAddress,
+            toAddress: foundTx.toAddress,
+            amount: foundTx.amount,
+            fee: foundTx.fee,
+            timestamp: foundTx.timestamp,
+            signature: foundTx.signature,
+            hash: txHash,
+          },
+          status: confirmations > 0 ? "confirmed" : "pending",
+          confirmations,
+          blockHeight,
+          inMempool: confirmations === 0,
+        });
+      } else {
+        res.status(404).json({ error: "Transaction not found" });
+      }
+    } catch (error) {
+      console.error("Error fetching transaction:", error);
+      res.status(500).json({ error: "Failed to fetch transaction" });
+    }
   }
-});
+);
 
-// Add scheduled block creation based on time slots
-setInterval(async () => {
+// Add an endpoint to mint the genesis block
+app.post("/genesis", async (req: express.Request, res: express.Response) => {
   try {
-    // Only try to create blocks if we have transactions in the mempool
-    if (mempool.length === 0) {
-      return;
+    // Check if blockchain already exists
+    let chain: Blockchain;
+
+    try {
+      chain = await loadBlockchainState();
+
+      if (chain.chain.length > 0) {
+        res.status(400).json({
+          error: "Genesis block already exists",
+          currentHeight: chain.chain.length,
+        });
+        return;
+      }
+    } catch (error) {
+      console.log("Creating new blockchain for genesis block");
+      chain = new Blockchain();
+
+      chain.chain = [];
     }
 
-    // Check if we should propose a block for the current time slot
-    await createAndBroadcastBlock();
+    const ec = new EC("secp256k1");
+    const keyPair = ec.genKeyPair();
+    const privateKey = keyPair.getPrivate("hex");
+    const publicKey = keyPair.getPublic("hex");
+
+    const genesisAddress = publicKey;
+
+    const { initialDistribution, initialSupply = 1000 } = req.body;
+
+    const genesisBlock = new Block(Date.now(), [], "0", genesisAddress);
+
+    chain.chain.push(genesisBlock);
+
+    chain.createAccount(genesisAddress, initialSupply);
+
+    chain.currentSupply = initialSupply;
+
+    if (initialDistribution && Array.isArray(initialDistribution)) {
+      for (const distribution of initialDistribution) {
+        if (distribution.address && distribution.amount) {
+          chain.createAccount(distribution.address, distribution.amount);
+
+          chain.currentSupply += distribution.amount;
+        }
+      }
+    }
+
+    chain.addVerifiedIdentity(genesisAddress);
+
+    await saveBlockchainState(chain);
+
+    manager.broadcast(Events.NEW_BLOCK, {
+      block: genesisBlock,
+      isGenesis: true,
+    });
+
+    try {
+      await fs.writeFile(
+        "./genesis_credentials.json",
+        JSON.stringify(
+          {
+            privateKey,
+            publicKey: genesisAddress,
+            timestamp: Date.now(),
+          },
+          null,
+          2
+        )
+      );
+      console.log("Genesis credentials saved to file");
+    } catch (error) {
+      console.error(
+        "Warning: Failed to save genesis credentials to file",
+        error
+      );
+    }
+
+    res.status(201).json({
+      message: "Genesis block created successfully",
+      block: {
+        index: 0,
+        timestamp: genesisBlock.timestamp,
+        hash: genesisBlock.hash,
+        previousHash: genesisBlock.previousHash,
+        proposer: genesisAddress,
+      },
+      genesisProposer: {
+        address: genesisAddress,
+        privateKey: privateKey, // Include the private key in the response
+        initialBalance: initialSupply,
+      },
+      initialDistribution: initialDistribution || [
+        { address: genesisAddress, amount: initialSupply },
+      ],
+      totalSupply: chain.currentSupply,
+      warning:
+        "IMPORTANT: Save the private key securely. It will not be shown again.",
+    });
   } catch (error) {
-    console.error("Error in scheduled block creation:", error);
+    console.error("Error creating genesis block:", error);
+    res.status(500).json({ error: "Failed to create genesis block" });
   }
-}, 5000); // Check every 5 seconds
+});
 
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);
