@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 8800;
 
 const my_addrr = process.env.MY_ADDRESS;
 let manager = new PeerManager(my_addrr);
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: ["http://localhost:3000"] }));
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const httpServer = http.createServer(app);
