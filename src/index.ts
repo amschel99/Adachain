@@ -807,6 +807,113 @@ app.get(
   }
 );
 
+// Add an endpoint to mint the genesis block
+app.post("/genesis", async (req: express.Request, res: express.Response) => {
+  try {
+    // Check if blockchain already exists
+    let chain: Blockchain;
+
+    try {
+      chain = await loadBlockchainState();
+
+      if (chain.chain.length > 0) {
+        res.status(400).json({
+          error: "Genesis block already exists",
+          currentHeight: chain.chain.length,
+        });
+        return;
+      }
+    } catch (error) {
+      console.log("Creating new blockchain for genesis block");
+      chain = new Blockchain();
+
+      chain.chain = [];
+    }
+
+    const ec = new EC("secp256k1");
+    const keyPair = ec.genKeyPair();
+    const privateKey = keyPair.getPrivate("hex");
+    const publicKey = keyPair.getPublic("hex");
+
+    const genesisAddress = publicKey;
+
+    const { initialDistribution, initialSupply = 1000 } = req.body;
+
+    const genesisBlock = new Block(Date.now(), [], "0", genesisAddress);
+
+    chain.chain.push(genesisBlock);
+
+    chain.createAccount(genesisAddress, initialSupply);
+
+    chain.currentSupply = initialSupply;
+
+    if (initialDistribution && Array.isArray(initialDistribution)) {
+      for (const distribution of initialDistribution) {
+        if (distribution.address && distribution.amount) {
+          chain.createAccount(distribution.address, distribution.amount);
+
+          chain.currentSupply += distribution.amount;
+        }
+      }
+    }
+
+    chain.addVerifiedIdentity(genesisAddress);
+
+    await saveBlockchainState(chain);
+
+    manager.broadcast(Events.NEW_BLOCK, {
+      block: genesisBlock,
+      isGenesis: true,
+    });
+
+    try {
+      await fs.writeFile(
+        "./genesis_credentials.json",
+        JSON.stringify(
+          {
+            privateKey,
+            publicKey: genesisAddress,
+            timestamp: Date.now(),
+          },
+          null,
+          2
+        )
+      );
+      console.log("Genesis credentials saved to file");
+    } catch (error) {
+      console.error(
+        "Warning: Failed to save genesis credentials to file",
+        error
+      );
+    }
+
+    res.status(201).json({
+      message: "Genesis block created successfully",
+      block: {
+        index: 0,
+        timestamp: genesisBlock.timestamp,
+        hash: genesisBlock.hash,
+        previousHash: genesisBlock.previousHash,
+        proposer: genesisAddress,
+      },
+      genesisProposer: {
+        address: genesisAddress,
+        privateKey: privateKey, // Include the private key in the response
+        initialBalance: initialSupply,
+      },
+      initialDistribution: initialDistribution || [
+        { address: genesisAddress, amount: initialSupply },
+      ],
+      totalSupply: chain.currentSupply,
+      warning:
+        "IMPORTANT: Save the private key securely. It will not be shown again.",
+    });
+  } catch (error) {
+    console.error("Error creating genesis block:", error);
+    res.status(500).json({ error: "Failed to create genesis block" });
+  }
+});
+
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);
   if (process.env.BOOTSTRAP_PEERS) {

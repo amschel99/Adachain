@@ -124,7 +124,7 @@ class Blockchain {
   private static readonly TOTAL_SUPPLY = 21000000;
   private static readonly BLOCK_REWARD = 50;
   private static readonly HALVING_INTERVAL = 210000;
-  private currentSupply: number;
+  public currentSupply: number;
 
   chain_id: string;
   chain: Block[];
