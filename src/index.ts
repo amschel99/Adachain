@@ -11,6 +11,7 @@ import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
 import { Request, Response } from "express";
 import { ec as EC } from "elliptic";
+import { Mempool, FixedLengthArray, TxIndex } from "./types";
 
 dotenv.config();
 const app = express();
@@ -29,7 +30,7 @@ let idbResponses: { chain: any; peer: string }[] = [];
 const IBD_COLLECTION_TIMEOUT = 5000;
 
 // Mempool to store pending transactions
-let mempool: Transaction[] = [];
+let mempool: { id: string; transactions: Transaction[] }[] = [];
 const BLOCK_SIZE = 10; // Number of transactions per block
 
 // Add at the top with other constants
@@ -74,7 +75,7 @@ manager.registerEvent(
   Events.SELECTED_PROPOSER,
   async (peer: Peer, data: any) => {
     try {
-      const { proposerAddress, proposerPublicAdress } = data;
+      const { proposerAddress, wallet_address } = data;
       console.log(`Received proposer selection: ${proposerAddress}`);
 
       // Check if this node is the selected proposer
@@ -83,14 +84,16 @@ manager.registerEvent(
           `This node (${my_addrr}) has been selected as the proposer`
         );
 
-        // Get 10 transactions from mempool
-        const blockTransactions = mempool.slice(0, BLOCK_SIZE);
+        // Find a full block of transactions
+        const fullBlock = mempool.find(
+          (block) => block.transactions.length === BLOCK_SIZE
+        );
 
-        if (blockTransactions.length > 0) {
+        if (fullBlock) {
           // Create and broadcast a new block
-          await createAndBroadcastBlock(proposerPublicAdress);
+          await createAndBroadcastBlock(wallet_address);
         } else {
-          console.log("No transactions in mempool to create a block");
+          console.log("No full blocks in mempool to create a block");
         }
       }
     } catch (error) {
@@ -222,6 +225,32 @@ async function saveBlockchainState(chain: Blockchain) {
   );
 }
 
+// Add this function to handle adding transactions to the mempool
+function addTransactionToMempool(tx: Transaction): void {
+  // Check if there's an existing block with space for more transactions
+  const availableBlock = mempool.find(
+    (block) => block.transactions.length < BLOCK_SIZE
+  );
+
+  if (availableBlock) {
+    // Add transaction to existing block
+    availableBlock.transactions.push(tx);
+    console.log(
+      `Added transaction to existing block, now has ${availableBlock.transactions.length}/${BLOCK_SIZE} transactions`
+    );
+  } else {
+    // Create a new block with this transaction
+    const newBlock = {
+      id: Date.now().toString(), // Use timestamp as unique ID
+      transactions: [tx],
+    };
+    mempool.push(newBlock);
+    console.log(
+      `Created new transaction block, now has 1/${BLOCK_SIZE} transactions`
+    );
+  }
+}
+
 // Update transaction handler
 manager.registerEvent(
   Events.NEW_TRANSACTION,
@@ -296,14 +325,23 @@ manager.registerEvent(
       }
 
       // If all validations pass, add to mempool
-      if (!mempool.some((t) => t.calculateHash() === tx.calculateHash())) {
-        mempool.push(tx);
-        console.log(
-          "Transaction added to mempool. Current size:",
-          mempool.length
-        );
+      // Check if transaction already exists in any block in the mempool
+      const txHash = tx.calculateHash();
 
-        // Check if we can create a block
+      // Check if this transaction already exists in any block
+      let txExists = false;
+      for (const block of mempool) {
+        for (const existingTx of block.transactions) {
+          if (existingTx.calculateHash() === txHash) {
+            txExists = true;
+            break;
+          }
+        }
+        if (txExists) break;
+      }
+
+      if (!txExists) {
+        addTransactionToMempool(tx);
       }
     } catch (error) {
       console.error("Error processing transaction:", error);
@@ -311,13 +349,24 @@ manager.registerEvent(
   }
 );
 
-// Update block creation
-async function createAndBroadcastBlock(public_addres: string) {
+// Update createAndBroadcastBlock to use the new mempool structure
+async function createAndBroadcastBlock(wallet_address: string) {
   try {
     const chain = await loadBlockchainState();
 
     console.log("We are the current proposer, creating block...");
-    const blockTransactions = mempool.slice(0, BLOCK_SIZE);
+
+    // Find a full block of transactions
+    const fullBlock = mempool.find(
+      (block) => block.transactions.length === BLOCK_SIZE
+    );
+
+    if (!fullBlock) {
+      console.log("No full blocks available to create a block");
+      return;
+    }
+
+    const blockTransactions = fullBlock.transactions;
 
     // Calculate total fees from transactions
     const totalFees = blockTransactions.reduce((sum, tx) => sum + tx.fee, 0);
@@ -327,44 +376,38 @@ async function createAndBroadcastBlock(public_addres: string) {
       Date.now(),
       blockTransactions,
       lastBlock.hash,
-      my_addrr
+      wallet_address
     );
 
     // Update chain with new block
     chain.chain.push(newBlock);
 
     // Mint block reward and distribute fees to proposer
-    chain.mintBlockReward(public_addres, totalFees);
+    chain.mintBlockReward(wallet_address, totalFees);
 
     await saveBlockchainState(chain);
 
+    let payload = {
+      block: newBlock,
+      block_id: fullBlock.id,
+    };
+
     // Broadcast the new block
-    manager.broadcast(Events.NEW_BLOCK, newBlock);
+    manager.broadcast(Events.NEW_BLOCK, payload);
 
     // Remove used transactions from mempool
-    mempool = mempool.slice(BLOCK_SIZE);
+    mempool = mempool.filter((block) => block.id !== fullBlock.id);
     console.log("Created and broadcast new block");
   } catch (error) {
     console.error("Error creating block:", error);
   }
 }
 
-// Add this new function for proposer selection
-function getNextProposer(chain: Blockchain): string {
-  const verifiedProposers = Array.from(chain.verifiedIdentities).sort();
-  if (verifiedProposers.length === 0) {
-    throw new Error("No verified proposers available");
-  }
-
-  const currentHeight = chain.chain.length;
-  const proposerIndex = currentHeight % verifiedProposers.length;
-  return verifiedProposers[proposerIndex];
-}
-
 // Handle incoming blocks from peers
-manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
+manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
   try {
     const chain = await loadBlockchainState();
+    const { block, block_id } = payload;
 
     // Validate block
     const newBlock = new Block(
@@ -388,12 +431,12 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
       // Add block to chain
       chain.chain.push(newBlock);
 
-      // Mint reward and fees to proposer
-      chain.mintBlockReward(newBlock.proposer, totalFees);
+      // we cannot mint block reward twice
+      // chain.mintBlockReward(newBlock.proposer, totalFees);
 
       await saveBlockchainState(chain);
 
-      // Remove included transactions from mempool
+      // Calculate hashes of all transactions in the new block
       const blockTxHashes = newBlock.transactions.map((tx) => {
         // Create a Transaction object only for hash calculation
         const txObj = new Transaction(
@@ -406,24 +449,35 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, block: any) => {
         return txObj.calculateHash();
       });
 
-      mempool = mempool.filter(
-        (tx) => !blockTxHashes.includes(tx.calculateHash())
-      );
+      // Remove transactions from mempool that are included in the new block
+      // We need to check all transactions in each mempool block
+      const updatedMempool = [];
 
-      console.log("Added new block to chain");
+      for (const mempoolBlock of mempool) {
+        // Filter out transactions that are in the new block
+        const remainingTransactions = mempoolBlock.transactions.filter(
+          (tx) => !blockTxHashes.includes(tx.calculateHash())
+        );
+
+        // If there are remaining transactions, keep this block with the filtered transactions
+        if (remainingTransactions.length > 0) {
+          updatedMempool.push({
+            id: mempoolBlock.id,
+            transactions: remainingTransactions,
+          });
+        }
+        // If no transactions remain, this block is completely removed
+      }
+
+      // Update mempool with filtered blocks
+      mempool = updatedMempool;
+
+      console.log("Added new block to chain and updated mempool");
     }
   } catch (error) {
     console.error("Error processing new block:", error);
   }
 });
-
-interface TransactionRequest {
-  fromAddress: string;
-  toAddress: string;
-  amount: number;
-  signature: string;
-  fee: number;
-}
 
 app.post(
   "/transaction",
@@ -497,15 +551,35 @@ app.post(
         return;
       }
 
-      // Broadcast the transaction as a plain object to ensure consistent serialization
-      manager.broadcast(Events.NEW_TRANSACTION, {
-        fromAddress: transaction.fromAddress,
-        toAddress: transaction.toAddress,
-        amount: transaction.amount,
-        fee: transaction.fee,
-        timestamp: transaction.timestamp, // Include the timestamp
-        signature: transaction.signature,
-      });
+      // Check if transaction already exists in mempool
+      const txHash = transaction.calculateHash();
+      let txExists = false;
+      for (const block of mempool) {
+        for (const existingTx of block.transactions) {
+          if (existingTx.calculateHash() === txHash) {
+            txExists = true;
+            break;
+          }
+        }
+        if (txExists) break;
+      }
+
+      if (!txExists) {
+        // Add to mempool
+        addTransactionToMempool(transaction);
+
+        // Broadcast the transaction as a plain object to ensure consistent serialization
+        manager.broadcast(Events.NEW_TRANSACTION, {
+          fromAddress: transaction.fromAddress,
+          toAddress: transaction.toAddress,
+          amount: transaction.amount,
+          fee: transaction.fee,
+          timestamp: transaction.timestamp, // Include the timestamp
+          signature: transaction.signature,
+        });
+      } else {
+        console.log("Transaction already exists in mempool, not adding again");
+      }
 
       res.json({
         success: true,
@@ -527,6 +601,7 @@ app.post(
     }
   }
 );
+
 app.post("/choose-proposer", async (req: Request, res: Response) => {
   const { address, wallet_address } = req.body;
   if (!address || !wallet_address) {
@@ -539,7 +614,7 @@ app.post("/choose-proposer", async (req: Request, res: Response) => {
     // Broadcast the SELECTED_PROPOSER event with the address to all peers
     manager.broadcast(Events.SELECTED_PROPOSER, {
       proposerAddress: address,
-      proposerPublicAdress: wallet_address,
+      wallet_address: wallet_address,
     });
 
     console.log(`Broadcast proposer selection: ${address}`);
