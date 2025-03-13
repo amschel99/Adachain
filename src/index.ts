@@ -71,11 +71,16 @@ wss.on("message", (peer, message) => {
 
 manager.registerEvent(Events.IBD_REQUEST, async (peer: Peer, data: any) => {
   try {
+    console.log(`Received IBD request from ${peer.url}`);
     const blockchainData = await fs.readFile("./blockchain.json", "utf8");
+    const state = JSON.parse(blockchainData);
+
+    // Send the complete blockchain state
     peer.send(
       JSON.stringify({
         event: Events.IBD_RESPONSE,
-        data: JSON.parse(blockchainData),
+        data: state,
+        forceSync: data.forceSync || false,
       })
     );
   } catch (error) {
@@ -115,12 +120,40 @@ manager.registerEvent(
 
 manager.registerEvent(Events.IBD_RESPONSE, async (peer: Peer, data: any) => {
   try {
-    console.log(`Received blockchain data from peer: ${peer.peerUrl}`);
+    console.log(`Received blockchain data from peer: ${peer.url}`);
+    const forceSync = data.forceSync || false;
 
-    // Add response to collection
+    // If this is a force sync, immediately apply the state
+    if (forceSync) {
+      console.log("Force sync requested, applying state immediately");
+      try {
+        const newChain = new Blockchain();
+        newChain.loadState(data);
+
+        if (newChain.isChainValid()) {
+          console.log(
+            "Received blockchain state is valid, replacing local state"
+          );
+          await saveBlockchainState(newChain);
+          console.log(
+            `Force synced with ${peer.url}, chain length: ${newChain.chain.length}`
+          );
+          return;
+        } else {
+          console.log(
+            "Received blockchain state is invalid, rejecting force sync"
+          );
+        }
+      } catch (error) {
+        console.error("Error processing force sync:", error);
+      }
+      return;
+    }
+
+    // Add response to collection for normal IBD
     idbResponses.push({
       chain: data,
-      peer: peer.peerUrl,
+      peer: peer.url,
     });
 
     // On first response, start a timer to process all collected responses
@@ -239,6 +272,74 @@ app.post("/sync", async (req: express.Request, res: express.Response) => {
     console.error("Error triggering IBD:", error);
     res.status(500).json({
       error: "Failed to trigger IBD",
+      details: error.message,
+    });
+  }
+});
+
+// Add an endpoint to force sync with a specific peer
+app.post("/force-sync", async (req: express.Request, res: express.Response) => {
+  try {
+    const { peerUrl } = req.body;
+
+    if (!peerUrl) {
+      res.status(400).json({ error: "peerUrl is required" });
+      return;
+    }
+
+    // Find the peer in our connections
+    const peers = manager.getPeers();
+    const targetPeer = peers.find((p: Peer) => p.url === peerUrl);
+
+    if (!targetPeer) {
+      // Try to connect to the peer if not already connected
+      try {
+        await manager.addPeer(peerUrl);
+        console.log(`Connected to peer ${peerUrl}`);
+      } catch (connError) {
+        res.status(404).json({
+          error: "Peer not found and could not connect",
+          details: connError.message,
+        });
+        return;
+      }
+    }
+
+    // Clear existing responses
+    idbResponses = [];
+
+    // Send IBD request to the specific peer
+    const payload = {
+      requestingAddress: my_addrr,
+      timestamp: Date.now(),
+      type: "INITIAL_BLOCK_REQUEST",
+      forceSync: true,
+    };
+
+    if (targetPeer) {
+      targetPeer.send(
+        JSON.stringify({
+          event: Events.IBD_REQUEST,
+          data: payload,
+        })
+      );
+
+      res.json({
+        success: true,
+        message: `Force sync request sent to ${peerUrl}`,
+      });
+    } else {
+      // If we just connected, broadcast to all peers
+      manager.broadcast(Events.IBD_REQUEST, payload);
+      res.json({
+        success: true,
+        message: `Connected to ${peerUrl} and broadcast sync request`,
+      });
+    }
+  } catch (error) {
+    console.error("Error forcing sync:", error);
+    res.status(500).json({
+      error: "Failed to force sync",
       details: error.message,
     });
   }
@@ -534,7 +635,7 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
   try {
     console.log(`Received new block from peer: ${peer.peerUrl}`);
     const chain = await loadBlockchainState();
-    const { block, block_id, isGenesis } = payload;
+    const { block, block_id, isGenesis, completeState } = payload;
 
     // Validate block
     const newBlock = new Block(
@@ -550,10 +651,34 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
     // For genesis blocks or special cases
     if (isGenesis) {
       console.log("Received genesis block, validating...");
-      if (chain.chain.length <= 1) {
-        chain.chain[0] = newBlock;
+
+      // If we received a complete state with the genesis block, use it
+      if (completeState) {
+        console.log("Received complete blockchain state with genesis block");
+
+        // Create a new blockchain instance and load the complete state
+        const newChain = new Blockchain();
+        newChain.loadState(completeState);
+
+        // Validate the received state
+        if (newChain.isChainValid()) {
+          console.log(
+            "Received blockchain state is valid, replacing local state"
+          );
+          await saveBlockchainState(newChain);
+          console.log("Genesis block and complete state accepted and saved");
+        } else {
+          console.log("Received blockchain state is invalid, rejecting");
+        }
+        return;
+      }
+
+      // If we only received the genesis block without state
+      if (chain.chain.length <= 1 && chain.chain[0].hash !== newBlock.hash) {
+        // Replace the genesis block
+        chain.chain = [newBlock];
         await saveBlockchainState(chain);
-        console.log("Genesis block accepted and saved");
+        console.log("Genesis block accepted and saved (without state)");
       } else {
         console.log("Genesis block rejected - chain already initialized");
       }
@@ -993,7 +1118,7 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
 
     const genesisBlock = new Block(Date.now(), [], "0", genesisAddress);
 
-    chain.chain.push(genesisBlock);
+    chain.chain = [genesisBlock]; // Replace the chain with just the genesis block
 
     chain.createAccount(genesisAddress, initialSupply);
 
@@ -1013,9 +1138,13 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
 
     await saveBlockchainState(chain);
 
+    // Broadcast the complete blockchain state, not just the genesis block
+    const completeState = chain.serializeState();
+
     manager.broadcast(Events.NEW_BLOCK, {
       block: genesisBlock,
       isGenesis: true,
+      completeState: completeState, // Include the complete state
     });
 
     try {
@@ -1063,6 +1192,46 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
   } catch (error) {
     console.error("Error creating genesis block:", error);
     res.status(500).json({ error: "Failed to create genesis block" });
+  }
+});
+
+// Add an endpoint to reset the blockchain (for testing only)
+app.post("/reset", async (req: express.Request, res: express.Response) => {
+  try {
+    const { confirmation } = req.body;
+
+    if (confirmation !== "CONFIRM_RESET") {
+      res.status(400).json({
+        error: "Reset requires confirmation",
+        message:
+          'Include { "confirmation": "CONFIRM_RESET" } in the request body',
+      });
+      return;
+    }
+
+    // Create a new blockchain
+    const newChain = new Blockchain();
+
+    // Save it
+    await saveBlockchainState(newChain);
+
+    // Clear mempool
+    mempool = [];
+
+    // Clear IBD responses
+    idbResponses = [];
+
+    res.json({
+      success: true,
+      message: "Blockchain reset to genesis state",
+      newState: newChain.serializeState(),
+    });
+  } catch (error) {
+    console.error("Error resetting blockchain:", error);
+    res.status(500).json({
+      error: "Failed to reset blockchain",
+      details: error.message,
+    });
   }
 });
 
