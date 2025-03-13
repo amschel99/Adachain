@@ -6,11 +6,9 @@ export interface Wallet {
   address?: string;
 }
 
-export type FixedLengthArray<T, N extends number> = T[] & { length: N };
-
 export interface TxIndex {
   id: string;
-  transactions: FixedLengthArray<Transaction, 10>;
+  transactions: Array<Transaction>;
 }
 
 export type Mempool = Array<TxIndex>;

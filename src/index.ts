@@ -11,7 +11,8 @@ import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
 import { Request, Response } from "express";
 import { ec as EC } from "elliptic";
-import { Mempool, FixedLengthArray, TxIndex } from "./types";
+import { Mempool } from "./types";
+import { Server as SocketServer } from "socket.io";
 
 dotenv.config();
 const app = express();
@@ -24,13 +25,23 @@ app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const httpServer = http.createServer(app);
 const wss = manager.getServer();
+export const io = new SocketServer(httpServer, {
+  path: "/socket.io",
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+io.on("connection", (socket) => {
+  socket.emit("newConnection", { message: `Hello from ${my_addrr}` });
+});
 
 let idbResponses: { chain: any; peer: string }[] = [];
 
 const IBD_COLLECTION_TIMEOUT = 5000;
 
 // Mempool to store pending transactions
-let mempool: { id: string; transactions: Transaction[] }[] = [];
+let mempool: Mempool = [];
 const BLOCK_SIZE = 10; // Number of transactions per block
 
 // Add at the top with other constants
@@ -592,6 +603,7 @@ app.post(
           timestamp: transaction.timestamp,
         },
         message: "Transaction broadcast to network",
+        hash: transaction.calculateHash(),
       });
     } catch (error) {
       res.status(500).json({
@@ -710,6 +722,90 @@ app.get("/supply", async (req: express.Request, res: express.Response) => {
     res.status(500).json({ error: "Failed to fetch supply info" });
   }
 });
+
+app.get(
+  "/transaction/:hash",
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const txHash = req.params.hash;
+      const chain = await loadBlockchainState();
+
+      // First check the blockchain for the transaction
+      let foundTx = null;
+      let blockHeight = null;
+      let confirmations = 0;
+
+      // Search through all blocks in the chain
+      for (let i = 0; i < chain.chain.length; i++) {
+        const block = chain.chain[i];
+
+        // Search through transactions in this block
+        for (const tx of block.transactions) {
+          // Create a Transaction object to calculate the hash
+          const txObj = new Transaction(
+            tx.fromAddress,
+            tx.toAddress,
+            tx.amount,
+            tx.fee,
+            tx.timestamp
+          );
+
+          // If signature exists, copy it to ensure hash calculation is accurate
+          if (tx.signature) {
+            txObj.signature = tx.signature;
+          }
+
+          if (txObj.calculateHash() === txHash) {
+            foundTx = tx;
+            blockHeight = i;
+            confirmations = chain.chain.length - i;
+            break;
+          }
+        }
+
+        if (foundTx) break;
+      }
+
+      // If not found in blockchain, check mempool
+      if (!foundTx) {
+        for (const block of mempool) {
+          for (const tx of block.transactions) {
+            if (tx.calculateHash() === txHash) {
+              foundTx = tx;
+              confirmations = 0; // 0 confirmations for mempool transactions
+              break;
+            }
+          }
+          if (foundTx) break;
+        }
+      }
+
+      if (foundTx) {
+        // Return the transaction with additional metadata
+        res.json({
+          transaction: {
+            fromAddress: foundTx.fromAddress,
+            toAddress: foundTx.toAddress,
+            amount: foundTx.amount,
+            fee: foundTx.fee,
+            timestamp: foundTx.timestamp,
+            signature: foundTx.signature,
+            hash: txHash,
+          },
+          status: confirmations > 0 ? "confirmed" : "pending",
+          confirmations,
+          blockHeight,
+          inMempool: confirmations === 0,
+        });
+      } else {
+        res.status(404).json({ error: "Transaction not found" });
+      }
+    } catch (error) {
+      console.error("Error fetching transaction:", error);
+      res.status(500).json({ error: "Failed to fetch transaction" });
+    }
+  }
+);
 
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);
