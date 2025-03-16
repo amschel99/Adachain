@@ -1627,6 +1627,30 @@ app.get(
   }
 );
 
+app.post("/isverified", async (req: Request, res: Response) => {
+  const { wallet_address } = req.body;
+
+  if (!wallet_address) {
+    res.status(400).json({
+      error: "wallet_address is required in request body",
+    });
+    return;
+  }
+
+  try {
+    const chain = await loadBlockchainState();
+    const isVerified = chain.isIdentityVerified(wallet_address);
+
+    res.json(isVerified);
+  } catch (error) {
+    console.error("Error checking identity verification:", error);
+    res.status(500).json({
+      error: "Failed to check identity verification status",
+      details: error.message,
+    });
+  }
+});
+
 httpServer.listen(PORT, () => {
   console.log(`Node running on port ${PORT}`);
   if (process.env.BOOTSTRAP_PEERS) {
