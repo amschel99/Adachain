@@ -5,7 +5,11 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import { Events } from "./events";
-import { REQUEST_IBD_TIMEOUT } from "./constants";
+import {
+  IDENTITY_FEE,
+  MASTER_NODE_ADDRESS,
+  REQUEST_IBD_TIMEOUT,
+} from "./constants";
 import { promises as fs } from "fs";
 import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
@@ -13,6 +17,7 @@ import { Request, Response } from "express";
 import { ec as EC } from "elliptic";
 import { Mempool } from "./types";
 import { Server as SocketServer } from "socket.io";
+import crypto from "crypto";
 
 dotenv.config();
 const app = express();
@@ -66,6 +71,18 @@ wss.on("message", (peer, message) => {
     console.log(`Received message from ${peer.url}:`, parsed.event);
   } catch (e) {
     console.log("Could not parse message:", message);
+  }
+});
+manager.registerEvent(Events.NEW_IDENTITY, async (peer: Peer, data: any) => {
+  try {
+    const { address, timestamp } = data;
+    console.log(`Received new identity from ${peer.url}: ${address}`);
+    const chain = await loadBlockchainState();
+    chain.addVerifiedIdentity(address);
+    await saveBlockchainState(chain);
+    console.log(`Identity ${address} added to local blockchain`);
+  } catch (error) {
+    console.error("Error handling new identity:", error);
   }
 });
 
@@ -471,23 +488,25 @@ manager.registerEvent(
       const chain = await loadBlockchainState();
       console.log(`Received a new transaction`);
 
-      // Convert received transaction data to a Transaction object, preserving timestamp
       let tx: Transaction;
-
-      // If txData is already a Transaction object with all methods
       if (typeof txData.isValid === "function") {
         tx = txData;
       } else {
-        // If it's raw JSON, reconstruct the Transaction with the original timestamp
         tx = new Transaction(
           txData.fromAddress,
           txData.toAddress,
           txData.amount,
           txData.fee,
-          txData.timestamp // Use the original timestamp
+          txData.timestamp
         );
-        // Also copy the signature
         tx.signature = txData.signature;
+      }
+
+      if (tx.toAddress === MASTER_NODE_ADDRESS) {
+        if (tx.amount !== IDENTITY_FEE) {
+          console.log("Invalid identity transaction amount");
+          return;
+        }
       }
 
       // Check if sender is banned
@@ -913,16 +932,40 @@ app.post("/choose-proposer", async (req: Request, res: Response) => {
     return;
   }
   try {
-    // Broadcast the SELECTED_PROPOSER event with the address to all peers
-    manager.broadcast(Events.SELECTED_PROPOSER, {
-      proposerAddress: address,
-      wallet_address: wallet_address,
-    });
+    if (address === my_addrr) {
+      const fullBlock = mempool.find(
+        (block) => block.transactions.length === BLOCK_SIZE
+      );
 
-    console.log(`Broadcast proposer selection: ${address}`);
-    res.status(200).json({
-      message: `Proposer ${address} has been selected and broadcast to network`,
-    });
+      if (fullBlock) {
+        // Create and broadcast a new block
+        await createAndBroadcastBlock(wallet_address);
+        res
+          .status(200)
+          .json(
+            `Proposer ${address} has been selected and broadcasted to the network`
+          );
+        return;
+      } else {
+        res
+          .status(400)
+          .json(
+            `This node was selected but it has no full blocks in the mempool to create a block`
+          );
+        console.log("No full blocks in mempool to create a block");
+        return;
+      }
+    } else {
+      manager.broadcast(Events.SELECTED_PROPOSER, {
+        proposerAddress: address,
+        wallet_address: wallet_address,
+      });
+
+      console.log(`Broadcast proposer selection: ${address}`);
+      res.status(200).json({
+        message: `Proposer ${address} has been selected and broadcast to network`,
+      });
+    }
   } catch (e) {
     console.error("Error selecting proposer:", e);
     res.status(500).json({ error: `Failed to select proposer: ${e.message}` });
@@ -1073,7 +1116,7 @@ app.get("/supply", async (req: express.Request, res: express.Response) => {
   try {
     const chain = await loadBlockchainState();
     res.json({
-      maxSupply: 21000000,
+      // maxSupply: 21000000,
       currentSupply: chain.getCurrentSupply(),
       blockReward: chain.getCurrentBlockReward(),
       nextHalvingBlock: Math.ceil(chain.chain.length / 210000) * 210000,
@@ -1318,8 +1361,91 @@ app.post("/genesis", async (req: express.Request, res: express.Response) => {
     res.status(500).json({ error: "Failed to create genesis block" });
   }
 });
+app.post("/identity/add", async (req: Request, res: Response) => {
+  const { address, privateKey } = req.body;
+  if (!address || !privateKey) {
+    res.status(400).json({ error: `Address and privateKey are required` });
+    return;
+  }
 
-// Add an endpoint to reset the blockchain (for testing only)
+  try {
+    const chain = await loadBlockchainState();
+
+    const identityTx = new Transaction(
+      address,
+      MASTER_NODE_ADDRESS,
+      1,
+      MINIMUM_TRANSACTION_FEE,
+      Date.now()
+    );
+
+    try {
+      const keyPair = ec.keyFromPrivate(privateKey);
+      const publicKey = keyPair.getPublic("hex");
+
+      if (publicKey !== address) {
+        res
+          .status(400)
+          .json({ error: "Private key does not match the provided address" });
+        return;
+      }
+
+      identityTx.sign(keyPair);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid private key or signing failed" });
+      return;
+    }
+
+    const senderAccount = chain.getAccount(address);
+    if (!senderAccount || senderAccount.balance < MINIMUM_TRANSACTION_FEE) {
+      res.status(400).json({
+        error: "Insufficient balance for identity registration fee",
+        required: MINIMUM_TRANSACTION_FEE,
+        current: senderAccount?.balance || 0,
+      });
+      return;
+    }
+
+    addTransactionToMempool(identityTx);
+
+    chain.addVerifiedIdentity(address);
+    await saveBlockchainState(chain);
+
+    manager.broadcast(Events.NEW_TRANSACTION, {
+      fromAddress: identityTx.fromAddress,
+      toAddress: identityTx.toAddress,
+      amount: identityTx.amount,
+      fee: identityTx.fee,
+      timestamp: identityTx.timestamp,
+      signature: identityTx.signature,
+    });
+
+    manager.broadcast(Events.NEW_IDENTITY, {
+      address,
+      timestamp: Date.now(),
+      txHash: identityTx.calculateHash(),
+    });
+
+    res.json({
+      success: true,
+      message: `Identity ${address} registration initiated`,
+      transaction: {
+        hash: identityTx.calculateHash(),
+        fee: MINIMUM_TRANSACTION_FEE,
+      },
+      token: {
+        id: crypto.createHash("sha256").update(address).digest("hex"),
+        value: 1,
+        utility: `Block proposal, 1 token, 1 vote`,
+        hash: identityTx.calculateHash(),
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: `Error adding identity: ${e.message}` });
+    return;
+  }
+});
+
 app.post("/reset", async (req: express.Request, res: express.Response) => {
   try {
     const { confirmation } = req.body;
