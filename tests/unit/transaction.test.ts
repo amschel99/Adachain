@@ -14,7 +14,7 @@ describe("Transaction", () => {
       expect(tx.fromAddress).toBe(fromAddress);
       expect(tx.toAddress).toBe(toAddress);
       expect(tx.amount).toBe(amount);
-      expect(tx.fee).toBe(0);
+      expect(tx.fee).toBe(0.1);
       expect(tx.signature).toBeUndefined();
       expect(tx.timestamp).toBeDefined();
     });

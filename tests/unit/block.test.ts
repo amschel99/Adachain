@@ -39,8 +39,8 @@ describe("Block", () => {
     });
 
     it("should generate different hash for different transactions", () => {
-      const tx1 = new Transaction("from", "to", 100);
-      const tx2 = new Transaction("from", "to", 200);
+      const tx1 = new Transaction("from", "to", 100, 0.2);
+      const tx2 = new Transaction("from", "to", 200, 0.2);
 
       const block1 = new Block(1000, [tx1], "prev-hash", "proposer");
       const block2 = new Block(1000, [tx2], "prev-hash", "proposer");
