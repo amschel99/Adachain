@@ -1,288 +1,149 @@
-# POU Chain (Proof of Uniqueness)
+# Adachain
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-> A next-generation blockchain platform implementing Proof of Uniqueness consensus, focusing on identity verification and sustainable token economics.
-
-## Philosophy & Vision
-
-### Core Principles
-
-1. **Identity-Based Consensus**
-
-   - Replace energy-intensive mining with identity verification
-   - Ensure one-person-one-vote through robust identity validation
-   - Create a more democratic and sustainable blockchain ecosystem
-
-2. **Economic Sustainability**
-
-   - Fixed maximum supply of 21 million tokens
-   - Predictable emission schedule through block rewards
-   - Transaction fee model that incentivizes network participation
-   - Fair distribution through identity-verified block proposers
-
-3. **Decentralization & Security**
-   - Distributed network of identity-verified nodes
-   - Protection against Sybil attacks through identity verification
-   - Malicious actor prevention through permanent banning
-   - Round-robin block proposal system for fair participation
-
-## Technical Architecture
-
-### Consensus Mechanism: Proof of Uniqueness (PoU)
-
-PoU is an innovative consensus mechanism that replaces traditional Proof of Work with identity verification:
-
-1. **Identity Verification**
-
-   - Nodes must verify their identity to participate in block proposal
-   - Prevents multiple accounts per individual (Sybil resistance)
-   - Creates a democratic one-person-one-vote system
-
-2. **Block Proposal Mechanism**
-   ```typescript
-   function getNextProposer(chain: Blockchain): string {
-     const verifiedProposers = Array.from(chain.verifiedIdentities).sort();
-     const currentHeight = chain.chain.length;
-     return verifiedProposers[currentHeight % verifiedProposers.length];
-   }
-   ```
-   - Round-robin selection among verified identities
-   - Deterministic selection based on block height
-   - Equal opportunity for all verified participants
-
-### Economic Model
-
-1. **Token Supply**
-
-   - Maximum supply: 21 million tokens
-   - Initial supply: 0 tokens
-   - Emission through block rewards
-
-   ```typescript
-   private static readonly TOTAL_SUPPLY = 21000000;
-   private static readonly BLOCK_REWARD = 50;
-   private static readonly HALVING_INTERVAL = 210000;
-   ```
-
-2. **Block Rewards**
-
-   - Initial reward: 50 tokens per block
-   - Halving every 210,000 blocks
-   - Rewards + transaction fees go to block proposer
-
-3. **Transaction Fees**
-   - Minimum fee: 0.001 tokens
-   - Prevents spam transactions
-   - Incentivizes block proposal participation
-
-### Network Architecture
-
-1. **P2P Communication**
-
-   - Mesh protocol for decentralized communication
-   - Automatic peer discovery
-   - Resilient network topology
-
-2. **Chain Synchronization**
-   - Initial Block Download (IBD) protocol
-   - Longest chain selection
-   - State verification and validation
+A peer-to-peer distributed blockchain network built with TypeScript and Express. This document explains the core concepts and functionality of the Guard blockchain.
 
 ## Core Components
 
-### 1. Block Structure
+### Blockchain Architecture
 
-```typescript
-class Block {
-  previousHash: string;
-  timestamp: number;
-  transactions: Transaction[];
-  proposer: string;
-  signature?: string;
-  hash: string;
-}
-```
+Guard implements a blockchain with the following key features:
 
-### 2. Transaction Structure
+- **Proof of Identity (PoI)**: Instead of Proof of Work or Proof of Stake, Guard uses a Proof of Identity consensus mechanism where only verified identities can propose blocks.
+- **Finite Supply**: The blockchain has a maximum supply of 21,000,000 coins.
+- **Block Rewards**: Block proposers receive rewards that halve every 210,000 blocks.
+- **Transaction Fees**: All transactions require a minimum fee to be included in a block.
 
-```typescript
-class Transaction {
-  fromAddress: string;
-  toAddress: string;
-  amount: number;
-  timestamp: number;
-  signature?: string;
-  fee: number;
-}
-```
+### Network Communication
 
-### 3. Account Model
+The blockchain uses a peer-to-peer network for node communication with the following event types:
 
-```typescript
-interface Account {
-  address: string;
-  balance: number;
-  nonce: number;
-}
-```
+- Initial Block Download (IBD) for syncing new nodes
+- Transaction broadcasting
+- Block proposal and propagation
+- Identity verification
 
-## API Reference
+## Data Structures
 
-### Wallet Operations
+### Transaction
 
-```http
-POST /wallet/create
-# Creates new wallet with keypair
-```
+Each transaction contains:
 
-Response:
+- `fromAddress`: Sender's public key
+- `toAddress`: Recipient's public key
+- `amount`: Transaction amount
+- `fee`: Transaction fee
+- `timestamp`: Time of creation
+- `signature`: Digital signature proving ownership
 
-```json
-{
-  "address": "public_key_hex",
-  "privateKey": "private_key_hex",
-  "balance": 0,
-  "message": "Wallet created successfully"
-}
-```
+### Block
 
-### Transaction Operations
+Each block contains:
 
-```http
-POST /transaction
-# Submit new transaction
-```
+- `previousHash`: Hash of the previous block
+- `timestamp`: Block creation time
+- `transactions`: Array of transactions
+- `proposer`: Address of the block proposer
+- `hash`: Hash of the block contents
 
-Body:
+### Blockchain
 
-```json
-{
-  "fromAddress": "sender_public_key",
-  "toAddress": "recipient_public_key",
-  "amount": number,
-  "signature": "transaction_signature",
-  "fee": number
-}
-```
+The blockchain manages:
 
-### Network Information
+- Block chain with genesis block
+- Account balances and transaction processing
+- Verified identities for block proposal
+- Banned addresses for security
 
-```http
-GET /supply
-# Retrieves token supply information
-Response: {
-  "maxSupply": 21000000,
-  "currentSupply": number,
-  "blockReward": number,
-  "nextHalvingBlock": number
-}
+## Core Functions
 
-GET /address/status/:address
-# Checks if an address is banned
-Response: {
-  "address": "public_key_hex",
-  "status": "active" | "banned",
-  "message": string
-}
-```
+### Transaction Processing
 
-## Getting Started
+1. Transactions are signed using elliptic curve cryptography (secp256k1)
+2. Transactions are validated for:
+   - Valid signature
+   - Sufficient funds
+   - Minimum transaction fee
+   - Sender not banned
+3. Valid transactions are added to the mempool
+4. Transactions in the mempool are grouped into blocks of 10
 
-### Prerequisites
+### Block Creation
 
-- Node.js v14+
-- TypeScript 4.x
-- npm or yarn
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/POU-chain.git
-
-# Install dependencies
-cd POU-chain
-npm install
-
-# Create .env file
-echo "MY_ADDRESS=your_node_public_key" > .env
-echo "BOOTSTRAP_PEERS=ws://peer1:5500,ws://peer2:5500" >> .env
-
-# Start the node
-npm start
-```
-
-### Running a Network
-
-1. Start the bootstrap node:
-
-```bash
-MY_ADDRESS=node1_public_key npm start
-```
-
-2. Start additional nodes:
-
-```bash
-MY_ADDRESS=node2_public_key BOOTSTRAP_PEERS=ws://localhost:5500 npm start
-```
-
-## Development
-
-### Building
-
-```bash
-npm run build
-```
-
-### Testing
-
-```bash
-npm test
-```
-
-## Economic Model
-
-### Token Distribution
-
-- Initial Supply: 0 tokens
-- Maximum Supply: 21 million tokens
-- Block Reward: Starts at 50 tokens, halves every 210,000 blocks
-- Transaction Fees: Minimum 0.001 tokens per transaction
-
-### Consensus
-
-- Round-robin block proposer selection among verified identities
-- Block proposers receive:
-  - Block rewards (if below max supply)
-  - All transaction fees from the block
-
-## Security Considerations
+1. A proposer is selected from verified identities
+2. The proposer creates a block with up to 10 transactions
+3. The proposer receives block rewards and transaction fees
+4. The new block is broadcast to the network
 
 ### Identity Verification
 
-- Nodes must be verified to propose blocks
-- Verification prevents Sybil attacks
-- Malicious actors are permanently banned
+1. Users pay a fee to register their identity
+2. Verified identities gain the ability to propose blocks
+3. This ensures only identified participants can create blocks
 
-### Transaction Security
+### Consensus and Synchronization
 
-- ECDSA signatures using secp256k1
-- Double-spend prevention through nonce tracking
-- Balance verification before processing
+1. Nodes validate all incoming blocks and transactions
+2. New nodes perform Initial Block Download to sync with the network
+3. The longest valid chain is considered the main chain
+4. Nodes can force-sync with specific peers if needed
 
-## Future Enhancements
+## API Endpoints
 
-1. Web-based block explorer
-2. Governance system for parameter updates
-3. Smart contract support
-4. Cross-chain bridges
-5. Advanced identity verification mechanisms
+The blockchain exposes several REST API endpoints:
 
-## Contributing
+- `/transaction`: Create and broadcast a new transaction
+- `/wallet/create`: Generate a new wallet (public/private key pair)
+- `/balance/:address`: Get the balance of an address
+- `/chain/info`: Get information about the blockchain
+- `/genesis`: Create the genesis block with initial distribution
+- `/identity/add`: Register an identity
+- `/choose-proposer`: Select a proposer for the next block
+- `/sync`: Trigger manual blockchain synchronization
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+## Getting Started
 
-## License
+### Setup
 
-[MIT](https://choosealicense.com/licenses/mit/)
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Configure environment variables in `.env`:
+   - `PORT`: Server port
+   - `MY_ADDRESS`: Your node's address
+   - `BOOTSTRAP_PEERS`: Comma-separated list of peer URLs
+
+### Running a Node
+
+```bash
+npm start
+```
+
+### Creating Genesis Block
+
+To initialize a new blockchain:
+
+```bash
+curl -X POST http://localhost:8800/genesis -H "Content-Type: application/json" \
+  -d '{"initialSupply": 1000}'
+```
+
+### Making Transactions
+
+```bash
+curl -X POST http://localhost:8800/transaction -H "Content-Type: application/json" \
+  -d '{"fromAddress": "YourPublicKey", "toAddress": "RecipientPublicKey", "amount": 10, "fee": 0.001, "privateKey": "YourPrivateKey"}'
+```
+
+## Security Considerations
+
+- **Private Key Safety**: Never share your private key.
+- **Transaction Validation**: All transactions are cryptographically verified.
+- **Address Banning**: Addresses attempting invalid transactions can be banned.
+- **Minimum Fees**: Required to prevent spam transactions.
+
+## Technical Details
+
+- Written in TypeScript
+- Uses Express.js for the API server
+- Uses elliptic for cryptographic functions
+- P2P communication via WebSockets
+- REST API for client interactions
