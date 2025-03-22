@@ -8,7 +8,7 @@ A peer-to-peer distributed blockchain network built with TypeScript and Express.
 
 Adachain implements a blockchain with the following key features:
 
-- **Proof of Identity (PoI)**: Instead of Proof of Work or Proof of Stake, Guard uses a Proof of Identity consensus mechanism where only verified identities can propose blocks.
+- **Proof of Identity (PoI)**: Instead of Proof of Work or Proof of Stake, Ada chain uses a Proof of Identity consensus mechanism where only verified identities can propose blocks.
 - **Finite Supply**: The blockchain has a maximum supply of 21,000,000 coins.
 - **Block Rewards**: Block proposers receive rewards that halve every 210,000 blocks.
 - **Transaction Fees**: All transactions require a minimum fee to be included in a block.
