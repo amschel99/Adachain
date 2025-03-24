@@ -1,288 +1,165 @@
-# POU Chain (Proof of Uniqueness)
+## Endpoints
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+### Transaction Operations
 
-> A next-generation blockchain platform implementing Proof of Uniqueness consensus, focusing on identity verification and sustainable token economics.
+| Endpoint            | Method | Description                                |
+| ------------------- | ------ | ------------------------------------------ |
+| `/transaction`      | POST   | Create and broadcast a new transaction     |
+| `/balance/:address` | GET    | Get account balance for a specific address |
 
-## Philosophy & Vision
+#### POST /transaction
 
-### Core Principles
+Create and broadcast a new transaction to the network.
 
-1. **Identity-Based Consensus**
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| fromAddress | string | Yes | Sender's public key |
+| toAddress | string | Yes | Recipient's public key |
+| amount | number | Yes | Amount to transfer |
+| fee | number | Yes | Transaction fee (minimum: 0.001) |
+| privateKey | string | Yes | Sender's private key for signing |
 
-   - Replace energy-intensive mining with identity verification
-   - Ensure one-person-one-vote through robust identity validation
-   - Create a more democratic and sustainable blockchain ecosystem
-
-2. **Economic Sustainability**
-
-   - Fixed maximum supply of 21 million tokens
-   - Predictable emission schedule through block rewards
-   - Transaction fee model that incentivizes network participation
-   - Fair distribution through identity-verified block proposers
-
-3. **Decentralization & Security**
-   - Distributed network of identity-verified nodes
-   - Protection against Sybil attacks through identity verification
-   - Malicious actor prevention through permanent banning
-   - Round-robin block proposal system for fair participation
-
-## Technical Architecture
-
-### Consensus Mechanism: Proof of Uniqueness (PoU)
-
-PoU is an innovative consensus mechanism that replaces traditional Proof of Work with identity verification:
-
-1. **Identity Verification**
-
-   - Nodes must verify their identity to participate in block proposal
-   - Prevents multiple accounts per individual (Sybil resistance)
-   - Creates a democratic one-person-one-vote system
-
-2. **Block Proposal Mechanism**
-   ```typescript
-   function getNextProposer(chain: Blockchain): string {
-     const verifiedProposers = Array.from(chain.verifiedIdentities).sort();
-     const currentHeight = chain.chain.length;
-     return verifiedProposers[currentHeight % verifiedProposers.length];
-   }
-   ```
-   - Round-robin selection among verified identities
-   - Deterministic selection based on block height
-   - Equal opportunity for all verified participants
-
-### Economic Model
-
-1. **Token Supply**
-
-   - Maximum supply: 21 million tokens
-   - Initial supply: 0 tokens
-   - Emission through block rewards
-
-   ```typescript
-   private static readonly TOTAL_SUPPLY = 21000000;
-   private static readonly BLOCK_REWARD = 50;
-   private static readonly HALVING_INTERVAL = 210000;
-   ```
-
-2. **Block Rewards**
-
-   - Initial reward: 50 tokens per block
-   - Halving every 210,000 blocks
-   - Rewards + transaction fees go to block proposer
-
-3. **Transaction Fees**
-   - Minimum fee: 0.001 tokens
-   - Prevents spam transactions
-   - Incentivizes block proposal participation
-
-### Network Architecture
-
-1. **P2P Communication**
-
-   - Mesh protocol for decentralized communication
-   - Automatic peer discovery
-   - Resilient network topology
-
-2. **Chain Synchronization**
-   - Initial Block Download (IBD) protocol
-   - Longest chain selection
-   - State verification and validation
-
-## Core Components
-
-### 1. Block Structure
-
-```typescript
-class Block {
-  previousHash: string;
-  timestamp: number;
-  transactions: Transaction[];
-  proposer: string;
-  signature?: string;
-  hash: string;
-}
-```
-
-### 2. Transaction Structure
-
-```typescript
-class Transaction {
-  fromAddress: string;
-  toAddress: string;
-  amount: number;
-  timestamp: number;
-  signature?: string;
-  fee: number;
-}
-```
-
-### 3. Account Model
-
-```typescript
-interface Account {
-  address: string;
-  balance: number;
-  nonce: number;
-}
-```
-
-## API Reference
-
-### Wallet Operations
-
-```http
-POST /wallet/create
-# Creates new wallet with keypair
-```
-
-Response:
+**Response:**
 
 ```json
 {
-  "address": "public_key_hex",
-  "privateKey": "private_key_hex",
+  "success": true,
+  "transaction": {
+    "fromAddress": "string",
+    "toAddress": "string",
+    "amount": number,
+    "fee": number,
+    "signature": "string",
+    "timestamp": number
+  },
+  "message": "Transaction broadcast to network"
+}
+```
+
+### Wallet Operations
+
+| Endpoint                   | Method | Description                   |
+| -------------------------- | ------ | ----------------------------- |
+| `/wallet/create`           | POST   | Create a new wallet           |
+| `/address/status/:address` | GET    | Check if an address is banned |
+
+#### POST /wallet/create
+
+Create a new wallet with a key pair.
+
+**Response:**
+
+```json
+{
+  "address": "string",
+  "privateKey": "string",
   "balance": 0,
   "message": "Wallet created successfully"
 }
 ```
 
-### Transaction Operations
+### Blockchain Operations
 
-```http
-POST /transaction
-# Submit new transaction
-```
+| Endpoint           | Method | Description                       |
+| ------------------ | ------ | --------------------------------- |
+| `/supply`          | GET    | Get blockchain supply information |
+| `/choose-proposer` | POST   | Select a block proposer           |
 
-Body:
+#### GET /supply
+
+Get current blockchain supply statistics.
+
+**Response:**
 
 ```json
 {
-  "fromAddress": "sender_public_key",
-  "toAddress": "recipient_public_key",
-  "amount": number,
-  "signature": "transaction_signature",
-  "fee": number
-}
-```
-
-### Network Information
-
-```http
-GET /supply
-# Retrieves token supply information
-Response: {
   "maxSupply": 21000000,
   "currentSupply": number,
   "blockReward": number,
   "nextHalvingBlock": number
 }
+```
 
-GET /address/status/:address
-# Checks if an address is banned
-Response: {
-  "address": "public_key_hex",
-  "status": "active" | "banned",
-  "message": string
+#### POST /choose-proposer
+
+Select a node as the next block proposer.
+
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| address | string | Yes | Address of the node to be selected as proposer |
+
+**Response:**
+
+```json
+{
+  "message": "Proposer {address} has been selected and broadcast to network"
 }
 ```
 
-## Getting Started
+### Account Operations
 
-### Prerequisites
+#### GET /balance/:address
 
-- Node.js v14+
-- TypeScript 4.x
-- npm or yarn
+Get account balance and information.
 
-### Installation
+**Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| address | string | The public key of the account |
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/POU-chain.git
+**Response:**
 
-# Install dependencies
-cd POU-chain
-npm install
-
-# Create .env file
-echo "MY_ADDRESS=your_node_public_key" > .env
-echo "BOOTSTRAP_PEERS=ws://peer1:5500,ws://peer2:5500" >> .env
-
-# Start the node
-npm start
+```json
+{
+  "address": "string",
+  "balance": number,
+  "nonce": number
+}
 ```
 
-### Running a Network
+#### GET /address/status/:address
 
-1. Start the bootstrap node:
+Check if an address is banned or active.
 
-```bash
-MY_ADDRESS=node1_public_key npm start
+**Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| address | string | The public key to check |
+
+**Response:**
+
+```json
+{
+  "address": "string",
+  "status": "banned" | "active",
+  "message": "string"
+}
 ```
 
-2. Start additional nodes:
+## Error Responses
 
-```bash
-MY_ADDRESS=node2_public_key BOOTSTRAP_PEERS=ws://localhost:5500 npm start
+All endpoints may return error responses in the following format:
+
+```json
+{
+  "error": "Error message description",
+  "details": "Additional error details (optional)"
+}
 ```
 
-## Development
+Common HTTP Status Codes:
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success |
+| 400 | Bad Request |
+| 404 | Not Found |
+| 500 | Internal Server Error |
 
-### Building
+## Notes
 
-```bash
-npm run build
-```
-
-### Testing
-
-```bash
-npm test
-```
-
-## Economic Model
-
-### Token Distribution
-
-- Initial Supply: 0 tokens
-- Maximum Supply: 21 million tokens
-- Block Reward: Starts at 50 tokens, halves every 210,000 blocks
-- Transaction Fees: Minimum 0.001 tokens per transaction
-
-### Consensus
-
-- Round-robin block proposer selection among verified identities
-- Block proposers receive:
-  - Block rewards (if below max supply)
-  - All transaction fees from the block
-
-## Security Considerations
-
-### Identity Verification
-
-- Nodes must be verified to propose blocks
-- Verification prevents Sybil attacks
-- Malicious actors are permanently banned
-
-### Transaction Security
-
-- ECDSA signatures using secp256k1
-- Double-spend prevention through nonce tracking
-- Balance verification before processing
-
-## Future Enhancements
-
-1. Web-based block explorer
-2. Governance system for parameter updates
-3. Smart contract support
-4. Cross-chain bridges
-5. Advanced identity verification mechanisms
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
-## License
-
-[MIT](https://choosealicense.com/licenses/mit/)
+- All transactions require a minimum fee of 0.001
+- Private keys should never be shared or exposed
+- Transactions must be signed with the corresponding private key
+- Block proposer selection is broadcast to all nodes in the network
