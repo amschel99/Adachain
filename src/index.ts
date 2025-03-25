@@ -772,39 +772,33 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
 
         // Calculate hashes of all transactions in the new block
         const blockTxHashes = newBlock.transactions.map((tx) => {
-          // Create a Transaction object only for hash calculation
           const txObj = new Transaction(
             tx.fromAddress,
             tx.toAddress,
             tx.amount,
             tx.fee,
-            tx.timestamp // Pass the timestamp to preserve the hash
+            tx.timestamp,
+            tx.message
           );
+          txObj.signature = tx.signature;
           return txObj.calculateHash();
         });
 
         // Remove transactions from mempool that are included in the new block
-        // We need to check all transactions in each mempool block
-        const updatedMempool = [];
-
-        for (const mempoolBlock of mempool) {
+        mempool = mempool.filter((mempoolBlock) => {
           // Filter out transactions that are in the new block
-          const remainingTransactions = mempoolBlock.transactions.filter(
+          mempoolBlock.transactions = mempoolBlock.transactions.filter(
             (tx) => !blockTxHashes.includes(tx.calculateHash())
           );
+          // Keep the block only if it still has transactions
+          return mempoolBlock.transactions.length > 0;
+        });
 
-          // If there are remaining transactions, keep this block with the filtered transactions
-          if (remainingTransactions.length > 0) {
-            updatedMempool.push({
-              id: mempoolBlock.id,
-              transactions: remainingTransactions,
-            });
-          }
-          // If no transactions remain, this block is completely removed
-        }
-
-        // Update mempool with filtered blocks
-        mempool = updatedMempool;
+        // Broadcast mempool update to all peers
+        manager.broadcast(Events.MEMPOOL_UPDATE, {
+          removedTransactions: blockTxHashes,
+          timestamp: Date.now(),
+        });
 
         console.log("Added new block to chain and updated mempool");
       } else {
@@ -812,12 +806,30 @@ manager.registerEvent(Events.NEW_BLOCK, async (peer: Peer, payload: any) => {
       }
     } else {
       console.log("Block does not link to our chain, requesting IBD");
-      // If the block doesn't link to our chain, we might be out of sync
-      // Request an IBD to get the latest chain
       requestIBD();
     }
   } catch (error) {
     console.error("Error processing new block:", error);
+  }
+});
+
+// Add mempool update event handler
+manager.registerEvent(Events.MEMPOOL_UPDATE, async (peer: Peer, data: any) => {
+  try {
+    const { removedTransactions, timestamp } = data;
+    console.log(`Received mempool update from ${peer.peerUrl}`);
+
+    // Remove the specified transactions from our mempool
+    mempool = mempool.filter((mempoolBlock) => {
+      mempoolBlock.transactions = mempoolBlock.transactions.filter(
+        (tx) => !removedTransactions.includes(tx.calculateHash())
+      );
+      return mempoolBlock.transactions.length > 0;
+    });
+
+    console.log(`Updated mempool based on peer ${peer.peerUrl}'s update`);
+  } catch (error) {
+    console.error("Error processing mempool update:", error);
   }
 });
 
@@ -1176,13 +1188,12 @@ app.get(
             tx.toAddress,
             tx.amount,
             tx.fee,
-            tx.timestamp
+            tx.timestamp,
+            tx.message
           );
 
-          // If signature exists, copy it to ensure hash calculation is accurate
-          if (tx.signature) {
-            txObj.signature = tx.signature;
-          }
+          // Copy the signature for hash calculation
+          txObj.signature = tx.signature;
 
           if (txObj.calculateHash() === txHash) {
             foundTx = tx;
@@ -1219,6 +1230,7 @@ app.get(
             fee: foundTx.fee,
             timestamp: foundTx.timestamp,
             signature: foundTx.signature,
+            message: foundTx.message,
             hash: txHash,
           },
           status: confirmations > 0 ? "confirmed" : "pending",
@@ -1756,6 +1768,23 @@ app.get("/hash/:hash", async (req: Request, res: Response) => {
     // First check if it's a block hash
     const block = chain.chain.find((b) => b.hash === hash);
     if (block) {
+      // Calculate hashes for all transactions in the block
+      const transactionsWithHashes = block.transactions.map((tx) => {
+        const txObj = new Transaction(
+          tx.fromAddress,
+          tx.toAddress,
+          tx.amount,
+          tx.fee,
+          tx.timestamp,
+          tx.message
+        );
+        txObj.signature = tx.signature;
+        return {
+          ...tx,
+          hash: txObj.calculateHash(),
+        };
+      });
+
       res.json({
         type: "block",
         data: {
@@ -1764,7 +1793,7 @@ app.get("/hash/:hash", async (req: Request, res: Response) => {
           timestamp: block.timestamp,
           proposer: block.proposer,
           transactionCount: block.transactions.length,
-          transactions: block.transactions,
+          transactions: transactionsWithHashes,
         },
       });
       return;
@@ -1772,20 +1801,30 @@ app.get("/hash/:hash", async (req: Request, res: Response) => {
 
     // Then check if it's a transaction hash
     for (const block of chain.chain) {
-      const transaction = block.transactions.find(
-        (tx) => tx.calculateHash() === hash
-      );
+      const transaction = block.transactions.find((tx) => {
+        const txObj = new Transaction(
+          tx.fromAddress,
+          tx.toAddress,
+          tx.amount,
+          tx.fee,
+          tx.timestamp,
+          tx.message
+        );
+        txObj.signature = tx.signature;
+        return txObj.calculateHash() === hash;
+      });
       if (transaction) {
         res.json({
           type: "transaction",
           data: {
-            hash: transaction.calculateHash(),
+            hash: hash,
             fromAddress: transaction.fromAddress,
             toAddress: transaction.toAddress,
             amount: transaction.amount,
             fee: transaction.fee,
             timestamp: transaction.timestamp,
             signature: transaction.signature,
+            message: transaction.message,
             blockHash: block.hash,
             blockNumber: chain.chain.indexOf(block),
           },
