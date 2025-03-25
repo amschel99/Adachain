@@ -11,4 +11,12 @@ export interface TxIndex {
   transactions: Array<Transaction>;
 }
 
+export interface Token {
+  id: string;
+  value: number;
+  hash: string;
+  owner: string;
+  createdAt: Date;
+}
+
 export type Mempool = Array<TxIndex>;

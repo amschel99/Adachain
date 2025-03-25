@@ -15,7 +15,7 @@ import { Blockchain, Transaction, Block, BlockchainState } from "./blockchain";
 import fsPromises from "fs/promises";
 import { Request, Response } from "express";
 import { ec as EC } from "elliptic";
-import { Mempool } from "./types";
+import { Mempool, Token } from "./types";
 import { Server as SocketServer } from "socket.io";
 import crypto from "crypto";
 
@@ -83,6 +83,26 @@ manager.registerEvent(Events.NEW_IDENTITY, async (peer: Peer, data: any) => {
     console.log(`Identity ${address} added to local blockchain`);
   } catch (error) {
     console.error("Error handling new identity:", error);
+  }
+});
+
+// Add token event handler
+manager.registerEvent(Events.NEW_TOKEN, async (peer: Peer, data: any) => {
+  try {
+    const { token, timestamp } = data;
+    console.log(`Received new token from ${peer.url}: ${token.id}`);
+    const chain = await loadBlockchainState();
+
+    // Add token to blockchain if it doesn't exist
+    if (!Array.from(chain.tokens).find((t) => t.id === token.id)) {
+      chain.addToken(token);
+      await saveBlockchainState(chain);
+      console.log(`Token ${token.id} added to local blockchain`);
+    } else {
+      console.log(`Token ${token.id} already exists, skipping`);
+    }
+  } catch (error) {
+    console.error("Error handling new token:", error);
   }
 });
 
@@ -372,6 +392,7 @@ app.get("/chain/info", async (req: express.Request, res: express.Response) => {
       accounts: chain.accounts.size,
       currentSupply: chain.currentSupply,
       peers: manager.getPeers().length,
+      fee: MINIMUM_TRANSACTION_FEE,
     });
   } catch (error) {
     console.error("Error getting chain info:", error);
@@ -497,7 +518,8 @@ manager.registerEvent(
           txData.toAddress,
           txData.amount,
           txData.fee,
-          txData.timestamp
+          txData.timestamp,
+          txData.message
         );
         tx.signature = txData.signature;
       }
@@ -803,7 +825,8 @@ app.post(
   "/transaction",
   async (req: express.Request, res: express.Response) => {
     try {
-      const { fromAddress, toAddress, amount, fee, privateKey } = req.body;
+      const { fromAddress, toAddress, amount, fee, privateKey, message } =
+        req.body;
 
       // Debug: Check if the provided private key generates the expected public key
       if (privateKey) {
@@ -837,7 +860,8 @@ app.post(
         toAddress,
         amount,
         fee,
-        timestamp
+        timestamp,
+        message
       );
 
       // Sign the transaction if privateKey is provided
@@ -894,8 +918,9 @@ app.post(
           toAddress: transaction.toAddress,
           amount: transaction.amount,
           fee: transaction.fee,
-          timestamp: transaction.timestamp, // Include the timestamp
+          timestamp: transaction.timestamp,
           signature: transaction.signature,
+          message: transaction.message,
         });
       } else {
         console.log("Transaction already exists in mempool, not adding again");
@@ -910,6 +935,7 @@ app.post(
           fee: transaction.fee,
           signature: transaction.signature,
           timestamp: transaction.timestamp,
+          message: transaction.message,
         },
         message: "Transaction broadcast to network",
         hash: transaction.calculateHash(),
@@ -1409,16 +1435,28 @@ app.post("/identity/add", async (req: Request, res: Response) => {
     addTransactionToMempool(identityTx);
 
     chain.addVerifiedIdentity(address);
-    await saveBlockchainState(chain);
 
-    manager.broadcast(Events.NEW_TRANSACTION, {
-      fromAddress: identityTx.fromAddress,
-      toAddress: identityTx.toAddress,
-      amount: identityTx.amount,
-      fee: identityTx.fee,
-      timestamp: identityTx.timestamp,
-      signature: identityTx.signature,
-    });
+    // Create a token for the user
+    const tokenId = crypto.createHash("sha256").update(address).digest("hex");
+    const tokenHash = identityTx.calculateHash();
+    const newToken: Token = {
+      id: tokenId,
+      value: 1,
+      hash: tokenHash,
+      owner: address,
+      createdAt: new Date(),
+    };
+
+    // Add token to blockchain
+    if (chain.addToken(newToken)) {
+      // Broadcast token creation event
+      manager.broadcast(Events.NEW_TOKEN, {
+        token: newToken,
+        timestamp: Date.now(),
+      });
+    }
+
+    await saveBlockchainState(chain);
 
     manager.broadcast(Events.NEW_IDENTITY, {
       address,
@@ -1651,10 +1689,130 @@ app.post("/isverified", async (req: Request, res: Response) => {
   }
 });
 
-httpServer.listen(PORT, () => {
+// Token Management Endpoints
+app.get("/tokens", async (req: Request, res: Response) => {
+  try {
+    const chain = await loadBlockchainState();
+    const tokens = Array.from(chain.tokens);
+
+    res.json({
+      count: tokens.length,
+      tokens: tokens,
+    });
+  } catch (error) {
+    console.error("Error fetching tokens:", error);
+    res.status(500).json({
+      error: "Failed to fetch tokens",
+      details: error.message,
+    });
+  }
+});
+
+app.get("/tokens/:id", async (req: Request, res: Response) => {
+  try {
+    const chain = await loadBlockchainState();
+    const token = Array.from(chain.tokens).find((t) => t.id === req.params.id);
+
+    if (!token) {
+      res.status(404).json({ error: "Token not found" });
+      return;
+    }
+
+    res.json(token);
+  } catch (error) {
+    console.error("Error fetching token:", error);
+    res.status(500).json({
+      error: "Failed to fetch token",
+      details: error.message,
+    });
+  }
+});
+
+app.get("/tokens/owner/:owner", async (req: Request, res: Response) => {
+  try {
+    const chain = await loadBlockchainState();
+    const owner = req.params.owner;
+    const tokens = Array.from(chain.tokens).filter(
+      (token) => token.owner === owner
+    );
+    res.json({ count: tokens.length, tokens });
+  } catch (error) {
+    console.error("Error fetching tokens by owner:", error);
+    res.status(500).json({ error: "Failed to fetch tokens by owner" });
+  }
+});
+
+// New endpoint to fetch information by hash
+app.get("/hash/:hash", async (req: Request, res: Response) => {
+  try {
+    const chain = await loadBlockchainState();
+    const hash = req.params.hash;
+
+    // First check if it's a block hash
+    const block = chain.chain.find((b) => b.hash === hash);
+    if (block) {
+      res.json({
+        type: "block",
+        data: {
+          hash: block.hash,
+          previousHash: block.previousHash,
+          timestamp: block.timestamp,
+          proposer: block.proposer,
+          transactionCount: block.transactions.length,
+          transactions: block.transactions,
+        },
+      });
+      return;
+    }
+
+    // Then check if it's a transaction hash
+    for (const block of chain.chain) {
+      const transaction = block.transactions.find(
+        (tx) => tx.calculateHash() === hash
+      );
+      if (transaction) {
+        res.json({
+          type: "transaction",
+          data: {
+            hash: transaction.calculateHash(),
+            fromAddress: transaction.fromAddress,
+            toAddress: transaction.toAddress,
+            amount: transaction.amount,
+            fee: transaction.fee,
+            timestamp: transaction.timestamp,
+            signature: transaction.signature,
+            blockHash: block.hash,
+            blockNumber: chain.chain.indexOf(block),
+          },
+        });
+        return;
+      }
+    }
+
+    // If not found, return 404
+    res.status(404).json({ error: "Hash not found in blockchain" });
+  } catch (error) {
+    console.error("Error fetching hash information:", error);
+    res.status(500).json({ error: "Failed to fetch hash information" });
+  }
+});
+
+httpServer.listen(PORT, async () => {
   console.log(`Node running on port ${PORT}`);
   if (process.env.BOOTSTRAP_PEERS) {
     process.env.BOOTSTRAP_PEERS.split(",").forEach(manager.addPeer);
+    //EMIT EVENT TO MASTER NODE
+    const key = ec.genKeyPair();
+    const publicKey = key.getPublic("hex");
+    const privateKey = key.getPrivate("hex");
+    console.log(`Your Private key is ${privateKey}, please keep it safe`);
+    manager.broadcast(Events.NEW_NODE, {
+      address: my_addrr,
+      timestamp: Date.now(),
+      wallet: {
+        address: publicKey,
+      },
+    });
     setTimeout(requestIBD, REQUEST_IBD_TIMEOUT);
   }
 });

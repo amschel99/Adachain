@@ -2,6 +2,7 @@
 import * as crypto from "crypto";
 import { ec as EC } from "elliptic";
 import debug from "debug";
+import { Token } from "./types";
 
 export const ec = new EC("secp256k1");
 const log = debug("savjeecoin:blockchain");
@@ -16,25 +17,34 @@ class Transaction {
   timestamp: number;
   signature?: string;
   fee: number;
+  message?: string;
 
   constructor(
     fromAddress: string,
     toAddress: string,
     amount: number,
     fee: number,
-    timestamp?: number
+    timestamp?: number,
+    message?: string
   ) {
     this.fromAddress = fromAddress;
     this.toAddress = toAddress;
     this.amount = amount;
     this.timestamp = timestamp || Date.now();
     this.fee = fee;
+    this.message = message;
   }
 
   calculateHash(): string {
     return crypto
       .createHash("sha256")
-      .update(this.fromAddress + this.toAddress + this.amount + this.timestamp)
+      .update(
+        this.fromAddress +
+          this.toAddress +
+          this.amount +
+          this.timestamp +
+          (this.message || "")
+      )
       .digest("hex");
   }
 
@@ -124,7 +134,8 @@ class Block {
           tx.toAddress,
           tx.amount,
           tx.fee,
-          tx.timestamp
+          tx.timestamp,
+          tx.message
         );
 
         // Copy the signature for validation
@@ -170,6 +181,7 @@ class Blockchain {
   chain_hash: string;
   accounts: Map<string, Account>;
   bannedAddresses: Set<string>;
+  tokens: Set<Token>;
 
   constructor() {
     this.chain = [this.createGenesisBlock()];
@@ -180,6 +192,7 @@ class Blockchain {
     this.accounts = new Map();
     this.bannedAddresses = new Set();
     this.currentSupply = 0;
+    this.tokens = new Set();
   }
 
   createGenesisBlock(): Block {
@@ -382,7 +395,8 @@ class Blockchain {
             txData.toAddress,
             txData.amount,
             txData.fee || 0,
-            txData.timestamp
+            txData.timestamp,
+            txData.message
           );
           tx.signature = txData.signature;
           return tx;
@@ -405,6 +419,27 @@ class Blockchain {
 
   getCurrentSupply(): number {
     return this.currentSupply;
+  }
+
+  addToken(token: Token): boolean {
+    // Validate token data
+    if (!token.id || !token.owner || token.value <= 0) {
+      console.log("Invalid token data");
+      return false;
+    }
+
+    // Check if token ID already exists
+    for (const existingToken of this.tokens) {
+      if (existingToken.id === token.id) {
+        console.log("Token with this ID already exists");
+        return false;
+      }
+    }
+
+    // Add token to the set
+    this.tokens.add(token);
+    console.log(`Added new token: ${token.id} owned by ${token.owner}`);
+    return true;
   }
 }
 
