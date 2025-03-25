@@ -1677,7 +1677,12 @@ app.post("/isverified", async (req: Request, res: Response) => {
 
   try {
     const chain = await loadBlockchainState();
-    const isVerified = chain.isIdentityVerified(wallet_address);
+    let isVerified = false;
+    isVerified = chain.isIdentityVerified(wallet_address);
+    if (wallet_address === MASTER_NODE_ADDRESS) {
+      //master node is always verified
+      isVerified = true;
+    }
 
     res.json(isVerified);
   } catch (error) {
